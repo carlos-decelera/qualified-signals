@@ -169,6 +169,8 @@ async def handle_signals(request: Request):
         if not entry_data:
             logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
             return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
+        
+        entry_id = entry_data[0]["id"]["entry_id"]
 
         # 3. LÓGICA DE PROCESAMIENTO
         clean_answers = {}
