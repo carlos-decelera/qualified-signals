@@ -80,59 +80,69 @@ def format_evaluations(history_obj: dict) -> str:
 async def handle_signals(request: Request):
     try:
         data = await request.json()
-        # Mantenemos la estructura de 'body' que te funciona
         questions = data.get("submission", {}).get("questions", [])
         
-        # --- IDENTIFICACIÓN POR ID ---
-        # Buscamos los valores clave recorriendo la lista por ID
-        domain_query = next((q.get("value") for q in questions if q.get("id") == "tNm2"), "")
+        # 1. IDENTIFICACIÓN DE DATOS DEL WEBHOOK
+        domain_input = next((q.get("value") for q in questions if q.get("id") == "tNm2"), "")
         reviewer_name = next((q.get("value") for q in questions if q.get("id") == "kDiW"), "Anónimo")
         new_comment_text = next((q.get("value") for q in questions if q.get("id") == "o9wQ"), "")
-        new_comment = f"{reviewer_name}: {new_comment_text}" if new_comment_text else ""
 
-        if not domain_query:
-            return {"status": "error", "message": "Domain ID (tNm2) not found in payload"}
+        if not domain_input:
+            return {"status": "error", "message": "No se proporcionó dominio"}
+
+        # Limpieza de dominio para que sea robusto (ej: quita https://)
+        domain_clean = domain_input.replace("https://", "").replace("http://", "").split('/')[0].strip().lower()
 
     except Exception as e:
-        return {"status": "error", "message": f"Invalid webhook structure: {str(e)}"}
+        return {"status": "error", "message": f"Error en payload: {str(e)}"}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # 1. BUSCAR RECORD POR DOMAIN (Exactamente como lo tenías)
-        search_payload = {
-            "query": domain_query,
-            "objects": ["companies"],
-            "request_as": {"type": "workspace"},
-            "limit": 1
-        }
-        search_res = await client.post(f"{BASE_URL}/objects/records/search", json=search_payload, headers=headers)
-        search_data = search_res.json().get("data", [])
         
-        if not search_data:
-            return {"status": "ignored", "reason": "company_not_found"}
+        # 2. PASO A: BUSCAR LA COMPAÑÍA POR DOMINIO
+        # Buscamos en el objeto global de compañías de Attio
+        company_res = await client.post(
+            f"{BASE_URL}/objects/companies/records/query",
+            headers=headers,
+            json={
+                "filter": {"domain": {"$eq": domain_clean}},
+                "limit": 1
+            }
+        )
+        comp_data = company_res.json().get("data", [])
         
-        record_id = search_data[0]["id"]["record_id"]
+        if not comp_data:
+            logger.warning(f"❌ Compañía no encontrada: {domain_clean}")
+            return {"status": "error", "message": "Dominio no existe en Attio"}
+        
+        # Este es el ID interno de la empresa (no del Deal)
+        company_record_id = comp_data[0]["id"]["record_id"]
 
-        # 2. BUSCAR ENTRY EN LISTA POR RECORD_ID (Exactamente como lo tenías)
-        query_payload = {
-            "limit": 1,
+        # 3. PASO B: BUSCAR EL DEAL EN LA LISTA QUE PERTENEZCA A ESA COMPAÑÍA
+        # Usamos parent_record para encontrar el Deal relacionado
+        deal_query = {
             "filter": {
                 "parent_record": {
-                    "target_record_id": {"$eq": record_id}
+                    "target_record_id": {"$eq": company_record_id}
                 }
-            }
+            },
+            "limit": 1
         }
-        entry_res = await client.post(f"{BASE_URL}/lists/{LIST_SLUG}/entries/query", json=query_payload, headers=headers)
+        
+        entry_res = await client.post(
+            f"{BASE_URL}/lists/{LIST_SLUG}/entries/query", 
+            headers=headers,
+            json=deal_query
+        )
         entry_data = entry_res.json().get("data", [])
 
         if not entry_data:
-            return {"status": "ignored", "reason": "entry_not_found"}
+            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
+            return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
 
+        # Ahora sí, tenemos el entry_id del DEAL
         entry = entry_data[0]
         entry_id = entry["id"]["entry_id"]
         existing_values = entry.get("entry_values", {})
-        
-        # Log existing field names to verify signals_raw_data exists
-        logger.info(f"📋 Existing fields in entry: {list(existing_values.keys())}")
 
         # 3. LÓGICA DE PROCESAMIENTO
         clean_answers = {}
@@ -193,6 +203,7 @@ async def handle_signals(request: Request):
         attio_body = {
             "data": {
                 "entry_values": {
+                    "signals_raw_qualified": json.dumps(history_obj),
                     "signals_qualified": format_evaluations(history_obj),  # Clean formatted display
                     "red_flags_qualified": "\n".join(all_red_signals),
                     "green_flags_qualified": "\n".join(all_green_signals),
