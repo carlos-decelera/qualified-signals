@@ -47,7 +47,7 @@ def format_evaluations(history_obj: dict) -> str:
         pillars = data.get("pillars", {})
         for pillar, value in pillars.items():
             lines.append(f"▸ {pillar}")
-            lines.append(f"   {value}")
+            lines.append(f"   {value}\n")
             lines.append("")
         
         # Red Flags for this evaluator
