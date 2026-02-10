@@ -141,7 +141,7 @@ async def handle_signals(request: Request):
             return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
 
         # Ahora sí, tenemos el entry_id del DEAL
-        deal = entry_data[0]
+        deal = deal_data[0]
         deal_id = deal["id"]["record_id"]
 
         # PASO C: BUSCAMOS EL MIEMBRO DE LA LISTA QUE ES HIJO DE ESTE DEAL
