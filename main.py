@@ -104,7 +104,7 @@ async def handle_signals(request: Request):
             f"{BASE_URL}/objects/companies/records/query",
             headers=headers,
             json={
-                "filter": {"domain": {"$eq": domain_clean}},
+                "filter": {"domains": {"domain": domain_clean}},
                 "limit": 1
             }
         )
@@ -121,28 +121,54 @@ async def handle_signals(request: Request):
         # Usamos parent_record para encontrar el Deal relacionado
         deal_query = {
             "filter": {
-                "parent_record": {
-                    "target_record_id": {"$eq": company_record_id}
+                "associated_company": {
+                    "target_object": "companies",
+                    "target_record_id": company_record_id
                 }
             },
             "limit": 1
         }
         
         entry_res = await client.post(
-            f"{BASE_URL}/lists/{LIST_SLUG}/entries/query", 
+            f"{BASE_URL}/objects/deals/records/query", 
             headers=headers,
             json=deal_query
         )
-        entry_data = entry_res.json().get("data", [])
+        deal_data = entry_res.json().get("data", [])
 
         if not entry_data:
             logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
             return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
 
         # Ahora sí, tenemos el entry_id del DEAL
-        entry = entry_data[0]
-        entry_id = entry["id"]["entry_id"]
-        existing_values = entry.get("entry_values", {})
+        deal = entry_data[0]
+        deal_id = deal["id"]["record_id"]
+
+        # PASO C: BUSCAMOS EL MIEMBRO DE LA LISTA QUE ES HIJO DE ESTE DEAL
+        deal_query = {
+            "filter": {
+                "path": [
+                    ["menorca_2026", "parent_record"],
+                    ["deals", "record_id"]
+                ],
+                "constraints": {
+                    "value": deal_id
+                }
+            },
+            "limit": 1
+        }
+        
+        entry_res = await client.post(
+            f"{BASE_URL}/lists/menorca_2026/entries/query", 
+            headers=headers,
+            json=deal_query
+        )
+        entry_data = entry_res.json().get("data", [])
+        existing_values = entry_data[0].get("values", {})
+
+        if not entry_data:
+            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
+            return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
 
         # 3. LÓGICA DE PROCESAMIENTO
         clean_answers = {}
