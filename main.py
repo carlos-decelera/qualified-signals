@@ -12,7 +12,7 @@ app = FastAPI()
 
 # Configuración
 ATTIO_TOKEN = os.getenv("ATTIO_API_KEY")
-LIST_SLUG = "fast_tracks"
+LIST_SLUG = "menorca_2026"
 BASE_URL = "https://api.attio.com/v2"
 
 headers = {
