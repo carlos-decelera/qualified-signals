@@ -136,8 +136,8 @@ async def handle_signals(request: Request):
         )
         deal_data = entry_res.json().get("data", [])
 
-        if not entry_data:
-            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
+        if not deal_data:
+            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en deals")
             return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
 
         # Ahora sí, tenemos el entry_id del DEAL
