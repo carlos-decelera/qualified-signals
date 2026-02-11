@@ -11,7 +11,7 @@ logger = logging.getLogger("AttioSignals")
 
 # ---CONFIGURACION---
 ATTIO_API_KEY = os.getenv("ATTIO_API_KEY")
-LIST_SLUG = os.getenv("LIST_ID")
+LIST_SLUG = os.getenv("LIST_SLUG")
 BASE_URL = "https://api.attio.com/v2"
 HEADERS = {
     "Authorization": f"Bearer {ATTIO_API_KEY}",
