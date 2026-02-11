@@ -1,267 +1,268 @@
-import os
-import json
-import logging
+from fastapi import FastAPI, Request, HTTPException
 import httpx
-from fastapi import FastAPI, Request
+import os
+import logging
 import uvicorn
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AttioSignals")
 
-app = FastAPI()
+# FLUJO DE LOS SIGNALS QUALIFIED
 
-# Configuración
-ATTIO_TOKEN = os.getenv("ATTIO_API_KEY")
-LIST_SLUG = "menorca_2026"
+# ---CONFIGURACION---
+ATTIO_API_KEY = os.getenv("ATTIO_API_KEY")
+LIST_SLUG = os.getenv("LIST_ID")
 BASE_URL = "https://api.attio.com/v2"
-
-headers = {
-    "Authorization": f"Bearer {ATTIO_TOKEN}",
+HEADERS = {
+    "Authorization": f"Bearer {ATTIO_API_KEY}",
     "Content-Type": "application/json"
 }
 
-# Mapeo por ID de Fillout (Indispensable para que no rompa si cambia el texto)
-ID_MAP = {
-    "1My6": "Fundadores",
-    "7Z9B": "Non-obvius insight",
-    "eKvZ": "Ola estructural o moda pasajera",
-    "6QdT": "Dificil de replicar?",
-    "c3RS": "Señales de tracción organica?",
-    "qFCQ": "Podría crear o definir una categoría?",
-    "vemj": "Encaja bien con Decelera?"
-}
+# Constantes para los índices de preguntas
+REVIEWER_INDEX = 0
+DOMAIN_INDEX = 1
+FLAGS_START = 2
+FLAGS_END = 9
+MULTI_FLAGS_START = 9
+MULTI_FLAGS_END = 11
+COMMENTS_INDEX = 11
 
-def format_evaluations(history_obj: dict) -> str:
-    """
-    Formats all evaluation data grouped by reviewer.
-    Each reviewer shows: answers, red flags, green flags, comment.
-    Clean output - no JSON, just readable text.
-    """
-    lines = []
+app = FastAPI()
+
+# ---FUNCIONES AUXILIARES---
+
+async def find_company_id_from_domain(domain: str) -> str:
+    """Usamos el dominio para sacar el record id de la compañía"""
     
-    for evaluator, data in history_obj.items():
-        lines.append(f"📋 EVALUADOR: {evaluator}")
-        lines.append("")
-        
-        # Pillars/Answers
-        pillars = data.get("pillars", {})
-        for pillar, value in pillars.items():
-            lines.append(f"▸ {pillar}")
-            lines.append(f"   {value}\n")
-            lines.append("")
-        
-        # Red Flags for this evaluator
-        red_flags = data.get("red_flags", [])
-        if red_flags:
-            lines.append("🔴 Red Flags:")
-            for flag in red_flags:
-                lines.append(f"   • {flag}")
-            lines.append("")
-        
-        # Green Flags for this evaluator
-        green_flags = data.get("green_flags", [])
-        if green_flags:
-            lines.append("🟢 Green Flags:")
-            for flag in green_flags:
-                lines.append(f"   • {flag}")
-            lines.append("")
-        
-        # Comment for this evaluator
-        comment = data.get("comment", "")
-        if comment:
-            lines.append(f"💬 Comentario: {comment}")
-            lines.append("")
-        
-        lines.append("")
-    
-    return "\n".join(lines).strip()
-
-@app.post("/webhook")
-async def handle_signals(request: Request):
-    try:
-        data = await request.json()
-        questions = data.get("submission", {}).get("questions", [])
-        
-        # 1. IDENTIFICACIÓN DE DATOS DEL WEBHOOK
-        domain_input = next((q.get("value") for q in questions if q.get("id") == "tNm2"), "")
-        reviewer_name = next((q.get("value") for q in questions if q.get("id") == "kDiW"), "Anónimo")
-        new_comment_text = next((q.get("value") for q in questions if q.get("id") == "o9wQ"), "")
-
-        if not domain_input:
-            return {"status": "error", "message": "No se proporcionó dominio"}
-
-        # Limpieza de dominio para que sea robusto (ej: quita https://)
-        domain_clean = domain_input.replace("https://", "").replace("http://", "").split('/')[0].strip().lower()
-
-    except Exception as e:
-        return {"status": "error", "message": f"Error en payload: {str(e)}"}
+    url = f"{BASE_URL}/objects/companies/records/query"
+    payload = {
+        "filter": {"domains": {"domain": domain}},
+        "limit": 1
+    }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        
-        # 2. PASO A: BUSCAR LA COMPAÑÍA POR DOMINIO
-        # Buscamos en el objeto global de compañías de Attio
-        company_res = await client.post(
-            f"{BASE_URL}/objects/companies/records/query",
-            headers=headers,
-            json={
-                "filter": {"domains": {"domain": domain_clean}},
-                "limit": 1
-            }
-        )
-        comp_data = company_res.json().get("data", [])
-        
-        if not comp_data:
-            logger.warning(f"❌ Compañía no encontrada: {domain_clean}")
-            return {"status": "error", "message": "Dominio no existe en Attio"}
-        
-        # Este es el ID interno de la empresa (no del Deal)
-        company_record_id = comp_data[0]["id"]["record_id"]
-
-        # 3. PASO B: BUSCAR EL DEAL EN LA LISTA QUE PERTENEZCA A ESA COMPAÑÍA
-        # Usamos parent_record para encontrar el Deal relacionado
-        deal_query = {
-            "filter": {
-                "associated_company": {
-                    "target_object": "companies",
-                    "target_record_id": company_record_id
-                }
-            },
-            "limit": 1
-        }
-        
-        entry_res = await client.post(
-            f"{BASE_URL}/objects/deals/records/query", 
-            headers=headers,
-            json=deal_query
-        )
-        deal_data = entry_res.json().get("data", [])
-
-        if not deal_data:
-            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en deals")
-            return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
-
-        # Ahora sí, tenemos el entry_id del DEAL
-        deal = deal_data[0]
-        deal_id = deal["id"]["record_id"]
-
-        # PASO C: BUSCAMOS EL MIEMBRO DE LA LISTA QUE ES HIJO DE ESTE DEAL
-        deal_query = {
-            "filter": {
-                "path": [
-                    ["menorca_2026", "parent_record"],
-                    ["deals", "record_id"]
-                ],
-                "constraints": {
-                    "value": deal_id
-                }
-            },
-            "limit": 1
-        }
-        
-        entry_res = await client.post(
-            f"{BASE_URL}/lists/menorca_2026/entries/query", 
-            headers=headers,
-            json=deal_query
-        )
-        entry_data = entry_res.json().get("data", [])
-        existing_values = entry_data[0].get("values", {})
-
-        if not entry_data:
-            logger.warning(f"⚠️ Deal no encontrado para {domain_clean} en lista {LIST_SLUG}")
-            return {"status": "error", "message": "La empresa existe pero no tiene un Deal activo"}
-        
-        entry_id = entry_data[0]["id"]["entry_id"]
-
-        # 3. LÓGICA DE PROCESAMIENTO
-        clean_answers = {}
-        reviewer_red_flags = []
-        reviewer_green_flags = []
-
-        # Extraer datos existentes del campo JSON separado (signals_raw_data)
         try:
-            raw_data = existing_values.get("signals_raw_data", [{}])[0].get("value", "{}")
-            history_obj = json.loads(raw_data) if raw_data else {}
-        except: history_obj = {}
-
-        # Procesar preguntas del Webhook por ID
-        for q in questions:
-            qid = q.get("id")
-            value = q.get("value")
-
-            # Mapeo de respuestas principales por ID
-            if qid in ID_MAP:
-                clean_val = str(value).strip().replace("\n", "")
-                clean_answers[ID_MAP[qid]] = clean_val
-
-            # Procesar Flags SOLO de las preguntas dedicadas (8-Red Flags y 9-Green Flags)
-            # IDs: 9D3f = Red Flags, fSUA = Green Flags
-            if qid in ["9D3f", "fSUA"] and isinstance(value, list):
-                for item in value:
-                    item_clean = str(item).strip().replace("\n", "")
-                    if "🟢" in item_clean: reviewer_green_flags.append(item_clean)
-                    if "🔴" in item_clean: reviewer_red_flags.append(item_clean)
-
-        # 4. GUARDAR TODO AGRUPADO POR REVIEWER
-        history_obj[reviewer_name] = {
-            "pillars": clean_answers,
-            "red_flags": reviewer_red_flags,
-            "green_flags": reviewer_green_flags,
-            "comment": new_comment_text  # Just the comment text, not prefixed
-        }
-        
-        # Collect all signals and comments for the summary fields
-        all_red_signals = []
-        all_green_signals = []
-        all_comments = []
-        
-        for name, data in history_obj.items():
-            # Extract SIGNALS from evaluation pillars (🟢/🔴 answers)
-            pillars = data.get("pillars", {})
-            for pillar, value in pillars.items():
-                if "🟢" in value:
-                    all_green_signals.append(f"[{name}] {pillar}: {value}")
-                elif "🔴" in value:
-                    all_red_signals.append(f"[{name}] {pillar}: {value}")
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
             
-            # Collect comments
-            comment = data.get("comment", "")
-            if comment:
-                all_comments.append(f"{name}: {comment}")
+            if not data:
+                logger.warning(f"No se encontró compañía con dominio: {domain}")
+                return ""
+            
+            company_id = data[0].get("id", {}).get("record_id", "")
+            logger.info(f"✅ Compañía encontrada: {company_id}")
+            return company_id
+
+        except Exception as e:
+            logger.error(f"Error buscando compañía: {e}")
+            return ""
+
+
+async def find_deal_from_company_id(company_id: str) -> str:
+    """Usamos el id de la compañia para sacar el deal asociado"""
+    
+    url = f"{BASE_URL}/objects/deals/records/query"
+    payload = {
+        "filter": {
+            "associated_company": {
+                "target_object": "companies",
+                "target_record_id": company_id
+            }
+        },
+        "limit": 1
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
+            
+            if not data:
+                logger.warning(f"No se encontró deal para compañía: {company_id}")
+                return ""
+
+            deal_id = data[0].get("id", {}).get("record_id", "")
+            logger.info(f"✅ Deal encontrado: {deal_id}")
+            return deal_id
         
-        attio_body = {
-            "data": {
-                "entry_values": {
-                    "signals_raw_qualified": json.dumps(history_obj),
-                    "signals_qualified": format_evaluations(history_obj),  # Clean formatted display
-                    "red_flags_qualified": "\n".join(all_red_signals),
-                    "green_flags_qualified": "\n".join(all_green_signals),
-                    "signals_comments_qualified": "\n".join(all_comments)  # Changed to signals_comments
-                }
+        except Exception as e:
+            logger.error(f"Error buscando deal: {e}")
+            return ""
+
+
+async def find_entry_from_deal_id(deal_id: str):
+    """Usamos el deal id para sacar el miembro de la lista que es su hijo"""
+    
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/query"
+    payload = {
+        "filter": {
+            "path": [
+                [LIST_SLUG, "parent_record"],
+                ["deals", "record_id"]
+            ],
+            "constraint": {  # Corregido de "constrains"
+                "value": deal_id
+            }
+        },
+        "limit": 1
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
+            
+            if not data:
+                logger.warning(f"No se encontró entry para deal: {deal_id}")
+                return "", {}
+
+            entry_id = data[0].get("id", {}).get("entry_id", "")
+            entry_values = data[0].get("values", {})
+            logger.info(f"✅ Entry encontrado: {entry_id}")
+            
+            return entry_id, entry_values
+
+        except Exception as e:
+            logger.error(f"Error buscando entry: {e}")
+            return "", {}
+
+
+def generar_payload(form_data):
+    """Vamos a sacar unos campos bonitos del form: Resumen, Greens, Reds y Comments"""
+    
+    questions = form_data.get("submission", {}).get("questions", [])
+    
+    if len(questions) < COMMENTS_INDEX + 1:
+        logger.error("Form data incompleto")
+        raise ValueError("Form data no tiene suficientes preguntas")
+
+    reviewer = questions[REVIEWER_INDEX].get("value", "")
+    domain = questions[DOMAIN_INDEX].get("value", "")
+
+    green_flags = f"{reviewer}:\n"
+    red_flags = f"{reviewer}:\n"  # Inicializar con el nombre del reviewer también
+    payload = f"{reviewer}:\n"
+
+    # Procesar flags individuales
+    for question in questions[FLAGS_START:FLAGS_END]:
+        flag = question.get("value", "")
+        payload += flag
+        payload += "\n"
+
+        if flag.startswith("🟢"):
+            green_flags += flag
+            green_flags += "\n"
+        elif flag.startswith("🔴"):
+            red_flags += flag
+            red_flags += "\n"  # Corregido de "red_flag"
+
+    # Procesar flags múltiples
+    for question in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
+        for flag in question.get("value", []):
+            payload += flag
+            payload += "\n"
+
+            if flag.startswith("🟢"):
+                green_flags += flag
+                green_flags += "\n"
+            elif flag.startswith("🔴"):
+                red_flags += flag
+                red_flags += "\n"  # Corregido de "red_flag"
+    
+    comments = questions[COMMENTS_INDEX].get("value", "")
+    
+    logger.info(f"✅ Payload generado para dominio: {domain}")
+    return domain, payload, green_flags, red_flags, comments
+
+
+async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments):
+    """Actualiza el entry en Attio con los datos del formulario"""
+    
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    data = {
+        "data": {
+            "entry_values": {
+                "signals_qualified": payload,
+                "green_flags_qualified": green_flags,
+                "red_flags_qualified": red_flags,
+                "signals_comments_qualified": comments
             }
         }
+    }
 
-        # Log what we're about to send
-        logger.info(f"📤 Sending to Attio for entry {entry_id}")
-        logger.info(f"📤 history_obj: {history_obj}")
-        logger.info(f"📤 attio_body: {json.dumps(attio_body, indent=2)}")
+    async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
+        try:
+            res = await client.patch(url, headers=HEADERS, json=data)  # Agregado await
+            res.raise_for_status()
 
-        # 5. ACTUALIZAR ENTRY (PATCH)
-        patch_res = await client.patch(
-            f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}",
-            json=attio_body,
-            headers=headers
-        )
-
-        logger.info(f"📥 Attio response status: {patch_res.status_code}")
-        logger.info(f"📥 Attio response body: {patch_res.text}")
-
-        if patch_res.status_code == 200:
             logger.info(f"✅ Entry {entry_id} actualizada correctamente")
-            return {"status": "success", "entry_id": entry_id, "data_saved": history_obj}
-        else:
-            logger.error(f"❌ Error al actualizar: {patch_res.text}")
-            return {"status": "error", "detail": patch_res.text, "attio_body_sent": attio_body}
+            return {"status": "success", "entry_id": entry_id}
+            
+        except Exception as e:
+            logger.error(f"❌ Error al actualizar entry: {e}")
+            raise
 
-if __name__ == "__main__":
+
+# ENDPOINT PRINCIPAL
+@app.post("/webhook")
+async def handle_signals(request: Request):
+    """Procesa el webhook de Tally con los signals qualified"""
+    
+    try:
+        form_data = await request.json()
+        logger.info("📥 Webhook recibido")
+
+        # Generar payload del formulario
+        domain, payload, green_flags, red_flags, comments = generar_payload(form_data)
+        
+        if not domain:
+            raise HTTPException(status_code=400, detail="Dominio no encontrado en el formulario")
+
+        # Buscar company
+        company_id = await find_company_id_from_domain(domain)
+        if not company_id:
+            raise HTTPException(status_code=404, detail=f"No se encontró compañía con dominio: {domain}")
+
+        # Buscar deal
+        deal_id = await find_deal_from_company_id(company_id)
+        if not deal_id:
+            raise HTTPException(status_code=404, detail=f"No se encontró deal para la compañía: {company_id}")
+
+        # Buscar entry
+        entry_id, entry_values = await find_entry_from_deal_id(deal_id)
+        if not entry_id:
+            raise HTTPException(status_code=404, detail=f"No se encontró entry para el deal: {deal_id}")
+
+        # Concatenar con valor existente (nuevo contenido primero)
+        existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
+        if existing_value:
+            payload = payload + "\n---\n" + existing_value
+            
+        # Actualizar entry
+        result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments)
+        
+        logger.info("✅ Proceso completado exitosamente")
+        return {"status": "success", "message": "Signals procesados correctamente", "entry_id": entry_id}
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Error de validación: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error inesperado: {e}")
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@app.get("/health")
+async def health_check():
+    """Endpoint para verificar que el servicio está funcionando"""
+    return {"status": "healthy", "service": "AttioSignals"}
+
+
+if __name__ == "__main__":  # Corregido de "="
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)  # Corregido de "rin"
