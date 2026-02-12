@@ -177,21 +177,43 @@ def generar_payload(form_data):
     logger.info(f"✅ Payload generado para dominio: {domain}")
     return domain, payload, green_flags, red_flags, comments
 
+def calculate_funnel_status(payload):
+    """Calculamos las condiciones del funnel
+    -> Usar después de tener el payload completo (con lo antigup y lo nuevo)"""
 
-async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments):
+    num_evaluaciones = payload.count("---") + 1
+    num_green_flags = payload.count("🟢")
+    num_red_flags = payload.count("🔴")
+
+    logger.info(f"Análisis para el funnel: Evals: {num_evaluaciones}, Greens: {num_green_flags}, Reds: {num_red_flags}")
+
+    if num_evaluaciones >= 2 and num_green_flags >= 2 and num_red_flags == 0:
+        return "In Play", True
+    
+    elif num_evaluaciones < 2:
+        return "Qualified", True
+
+    elif num_evaluaciones >= 2 and num_red_flags > 0:
+        return "Not Qualified", False
+
+async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True):
     """Actualiza el entry en Attio con los datos del formulario"""
     
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     data = {
         "data": {
             "entry_values": {
-                "signals_qualified": payload,
-                "green_flags_qualified": green_flags,
-                "red_flags_qualified": red_flags,
-                "signals_comments_qualified": comments
+                "signals_qualified": [{"value": payload}],
+                "green_flags_qualified": [{"value": green_flags}],
+                "red_flags_qualified": [{"value": red_flags}],
+                "signals_comments_qualified": [{"value": comments}],
+                "status": [{"status": status}]
             }
         }
     }
+
+    if not qualified:
+        data["reason"] = [{"status": "Signals (Qualified)"}]
 
     async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
         try:
@@ -240,9 +262,12 @@ async def handle_signals(request: Request):
         existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
         if existing_value:
             payload = payload + "\n---\n" + existing_value
-            
+        
+        # Vamos a ver el funnel como va
+        status, qualified = calculate_funnel_status(payload)
+
         # Actualizar entry
-        result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments)
+        result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified)
         
         logger.info("✅ Proceso completado exitosamente")
         return {"status": "success", "message": "Signals procesados correctamente", "entry_id": entry_id}
