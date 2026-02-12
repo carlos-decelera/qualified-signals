@@ -98,7 +98,13 @@ async def find_entry_from_deal_id(deal_id: str):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/query"
     payload = {
         "filter": {
-            "parent_record": deal_id
+            "path": [
+                [LIST_SLUG, "parent_record"],
+                ["deals", "record_id"]
+            ],
+            "constraints": {
+                "value": deal_id
+            }
         },
         "limit": 1
     }
