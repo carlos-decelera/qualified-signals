@@ -196,7 +196,7 @@ def calculate_funnel_status(payload):
     elif num_evaluaciones >= 2 and num_red_flags > 0:
         return "Not Qualified", False
 
-    return "Qualified", True
+    return "Not Qualified", True
 
 async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True):
     """Actualiza el entry en Attio con los datos del formulario"""
