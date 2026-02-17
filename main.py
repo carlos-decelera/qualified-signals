@@ -189,7 +189,7 @@ def calculate_funnel_status(payload):
     logger.info(f"Análisis para el funnel: Evals: {num_evaluaciones}, Greens: {num_green_flags}, Reds: {num_red_flags}")
 
     if num_evaluaciones >= 2 and num_green_flags >= 2 and num_red_flags == 0:
-        return "In Play", True
+        return "In play", True
     
     elif num_evaluaciones < 2:
         return "Qualified", True
