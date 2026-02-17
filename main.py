@@ -152,10 +152,10 @@ def generar_payload(form_data):
         payload += flag
         payload += "\n"
 
-        if flag.startswith("🟢"):
+        if "🟢" in flag:
             green_flags += flag
             green_flags += "\n"
-        elif flag.startswith("🔴"):
+        elif "🔴" in flag:
             red_flags += flag
             red_flags += "\n"  # Corregido de "red_flag"
 
@@ -166,10 +166,10 @@ def generar_payload(form_data):
             payload += flag
             payload += "\n"
 
-            if flag.startswith("🟢"):
+            if "🟢" in flag:
                 green_flags += flag
                 green_flags += "\n"
-            elif flag.startswith("🔴"):
+            elif "🔴" in flag:
                 red_flags += flag
                 red_flags += "\n"  # Corregido de "red_flag"
     
