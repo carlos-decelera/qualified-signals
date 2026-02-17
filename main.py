@@ -209,11 +209,13 @@ async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments
                 "signals_qualified": [{"value": payload}],
                 "green_flags_qualified": [{"value": green_flags}],
                 "red_flags_qualified": [{"value": red_flags}],
-                "signals_comments_qualified": [{"value": comments}],
                 "status": [{"status": status}]
             }
         }
     }
+
+    if comments and comments.strip():
+        data["signals_comments_qualified"] = [{"value": comments}]
 
     if not qualified:
         data["reason"] = [{"status": "Signals (Qualified)"}]
