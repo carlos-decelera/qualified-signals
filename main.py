@@ -221,7 +221,7 @@ async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer):
             res = await client.patch(url, headers=HEADERS, json=data)  # Agregado await
             res.raise_for_status()
 
-            logger.info(f"✅ Entry {entry_id} actualizada correctamente")
+            logger.info(f"✅ Entry {entry_id} actualizada validator correctamente")
             return {"status": "success", "entry_id": entry_id}
             
         except Exception as e:
