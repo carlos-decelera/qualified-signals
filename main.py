@@ -165,7 +165,7 @@ def generar_payload(form_data):
         if isinstance(value, list):
             for flag in value:
                 if not flag: continue
-                
+
                 payload += flag
                 payload += "\n"
 
@@ -299,13 +299,18 @@ async def handle_signals(request: Request):
         response = await upload_reviewer_ko_ok(entry_id, payload, reviewer)
 
         # Concatenar con valor existente (nuevo contenido primero)
-        existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
+        existing_list = entry_values.get("signals_qualified", [])
+        existing_value = existing_list[0].get("value", "") if existing_list else ""
         logger.info(f"existing_value: '{existing_value}'")
         logger.info(f"signals_qualified raw: {entry_values.get('signals_qualified')}")
         logger.info(f"payload final: '{payload}'")
         if existing_value:
-            existing_greens = entry_values.get("green_flags_qualified", [{}])[0].get("value", "")
-            existing_reds = entry_values.get("red_flags_qualified", [{}])[0].get("value", "")
+            existing_greens_list = entry_values.get("green_flags_qualified", [])
+            existing_greens = existing_greens_list[0].get("value", "") if existing_greens_list else ""
+
+            existing_reds_list = entry_values.get("red_flags_qualified", [])
+            existing_reds = existing_reds_list[0].get("value", "") if existing_reds_list else ""
+
             green_flags = green_flags + "\n---\n" + existing_greens
             red_flags = red_flags + "\n---\n" + existing_reds
             payload = payload + "\n---\n" + existing_value
