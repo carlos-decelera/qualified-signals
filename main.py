@@ -162,16 +162,17 @@ def generar_payload(form_data):
     # Procesar flags múltiples
     for question in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         value = question.get("value") or []
-        for flag in value:
-            payload += flag
-            payload += "\n"
+        if value:
+            for flag in value:
+                payload += flag
+                payload += "\n"
 
-            if "🟢" in flag:
-                green_flags += flag
-                green_flags += "\n"
-            elif "🔴" in flag:
-                red_flags += flag
-                red_flags += "\n"  # Corregido de "red_flag"
+                if "🟢" in flag:
+                    green_flags += flag
+                    green_flags += "\n"
+                elif "🔴" in flag:
+                    red_flags += flag
+                    red_flags += "\n"  # Corregido de "red_flag"
     
     comments = questions[COMMENTS_INDEX].get("value", "")
     
@@ -244,10 +245,10 @@ async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments
     }
 
     if comments and comments.strip():
-        data["signals_comments_qualified"] = [{"value": comments}]
+        data["data"]["entry_values"]["signals_comments_qualified"] = [{"value": comments}]
 
     if not qualified:
-        data["reason"] = [{"status": "Signals (Qualified)"}]
+        data["data"]["entry_values"]["reason"] = [{"status": "Signals (Qualified)"}]
 
     async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
         try:
@@ -305,7 +306,6 @@ async def handle_signals(request: Request):
             existing_reds = entry_values.get("red_flags_qualified", [{}])[0].get("value", "")
             green_flags = green_flags + "\n---\n" + existing_greens
             red_flags = red_flags + "\n---\n" + existing_reds
-            payload = payload + "\n---\n" + existing_value
             payload = payload + "\n---\n" + existing_value
         
         # Vamos a ver el funnel como va
