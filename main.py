@@ -176,7 +176,7 @@ def generar_payload(form_data):
     comments = questions[COMMENTS_INDEX].get("value", "")
     
     logger.info(f"✅ Payload generado para dominio: {domain}")
-    return domain, payload, green_flags, red_flags, comments
+    return domain, payload, green_flags, red_flags, comments, reviewer
 
 def calculate_funnel_status(payload):
     """Calculamos las condiciones del funnel
@@ -198,6 +198,35 @@ def calculate_funnel_status(payload):
         return "Not qualified", False
 
     return "Not qualified", True
+
+async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer):
+    """Actualizamos los campos de vaidator"""
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    data = {
+        "data": {
+            "entry_values": {
+            }
+        }
+    }
+
+    num_red_flags = payload_single.count("🔴")
+
+    if num_red_flags > 0:
+        data["data"]["entry_values"]["validator_ko"] = [{"option": reviewer}]
+    else:
+        data["data"]["entry_values"]["vallidator_ok"] = [{"option": reviewer}]
+
+    async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
+        try:
+            res = await client.patch(url, headers=HEADERS, json=data)  # Agregado await
+            res.raise_for_status()
+
+            logger.info(f"✅ Entry {entry_id} actualizada correctamente")
+            return {"status": "success", "entry_id": entry_id}
+            
+        except Exception as e:
+            logger.error(f"❌ Error al actualizar reviewer: {e}")
+            raise
 
 async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True):
     """Actualiza el entry en Attio con los datos del formulario"""
@@ -243,7 +272,7 @@ async def handle_signals(request: Request):
         logger.info("📥 Webhook recibido")
 
         # Generar payload del formulario
-        domain, payload, green_flags, red_flags, comments = generar_payload(form_data)
+        domain, payload, green_flags, red_flags, comments, reviewer = generar_payload(form_data)
         
         if not domain:
             raise HTTPException(status_code=400, detail="Dominio no encontrado en el formulario")
@@ -262,6 +291,9 @@ async def handle_signals(request: Request):
         entry_id, entry_values = await find_entry_from_deal_id(deal_id)
         if not entry_id:
             raise HTTPException(status_code=404, detail=f"No se encontró entry para el deal: {deal_id}")
+
+        #Ponemos el validator
+        response = upload_reviewer_ko_ok(entry_id, payload, reviewer)
 
         # Concatenar con valor existente (nuevo contenido primero)
         existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
