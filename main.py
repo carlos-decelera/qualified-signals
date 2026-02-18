@@ -293,7 +293,7 @@ async def handle_signals(request: Request):
             raise HTTPException(status_code=404, detail=f"No se encontró entry para el deal: {deal_id}")
 
         #Ponemos el validator
-        response = upload_reviewer_ko_ok(entry_id, payload, reviewer)
+        response = await upload_reviewer_ko_ok(entry_id, payload, reviewer)
 
         # Concatenar con valor existente (nuevo contenido primero)
         existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
