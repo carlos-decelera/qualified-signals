@@ -298,6 +298,7 @@ async def handle_signals(request: Request):
         # Concatenar con valor existente (nuevo contenido primero)
         existing_value = entry_values.get("signals_qualified", [{}])[0].get("value", "")
         logger.info(f"existing_value: '{existing_value}'")
+        logger.info(f"signals_qualified raw: {entry_values.get('signals_qualified')}")
         logger.info(f"payload final: '{payload}'")
         if existing_value:
             payload = payload + "\n---\n" + existing_value
