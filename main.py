@@ -301,6 +301,11 @@ async def handle_signals(request: Request):
         logger.info(f"signals_qualified raw: {entry_values.get('signals_qualified')}")
         logger.info(f"payload final: '{payload}'")
         if existing_value:
+            existing_greens = entry_values.get("green_flags_qualified", [{}])[0].get("value", "")
+            existing_reds = entry_values.get("red_flags_qualified", [{}])[0].get("value", "")
+            green_flags = green_flags + "\n---\n" + existing_greens
+            red_flags = red_flags + "\n---\n" + existing_reds
+            payload = payload + "\n---\n" + existing_value
             payload = payload + "\n---\n" + existing_value
         
         # Vamos a ver el funnel como va
