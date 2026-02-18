@@ -162,8 +162,10 @@ def generar_payload(form_data):
     # Procesar flags múltiples
     for question in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         value = question.get("value")
-        if value:
+        if isinstance(value, list):
             for flag in value:
+                if not flag: continue
+                
                 payload += flag
                 payload += "\n"
 
