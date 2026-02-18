@@ -176,7 +176,7 @@ def generar_payload(form_data):
     comments = questions[COMMENTS_INDEX].get("value", "")
     
     logger.info(f"✅ Payload generado para dominio: {domain}")
-    return domain, payload, green_flags, red_flags, comments, reviewer
+    return domain, payload, green_flags, red_flags, comments
 
 def calculate_funnel_status(payload):
     """Calculamos las condiciones del funnel
@@ -199,7 +199,7 @@ def calculate_funnel_status(payload):
 
     return "Not qualified", True
 
-async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True, reviewer):
+async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True):
     """Actualiza el entry en Attio con los datos del formulario"""
     
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
@@ -215,13 +215,10 @@ async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments
     }
 
     if comments and comments.strip():
-        data["data"]["entry_values"]["signals_comments_qualified"] = [{"value": comments}]
+        data["signals_comments_qualified"] = [{"value": comments}]
 
     if not qualified:
-        data["data"]["entry_values"]["reason"] = [{"status": "Signals (Qualified)"}]
-        data["data"]["entry_values"]["validator_ko"] = [{"option": reviewer}]
-    else:
-        data["data"]["entry_values"]["vallidator_ok"] = [{"option": reviewer}]
+        data["reason"] = [{"status": "Signals (Qualified)"}]
 
     async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
         try:
@@ -246,7 +243,7 @@ async def handle_signals(request: Request):
         logger.info("📥 Webhook recibido")
 
         # Generar payload del formulario
-        domain, payload, green_flags, red_flags, comments, reviewer = generar_payload(form_data)
+        domain, payload, green_flags, red_flags, comments = generar_payload(form_data)
         
         if not domain:
             raise HTTPException(status_code=400, detail="Dominio no encontrado en el formulario")
@@ -275,7 +272,7 @@ async def handle_signals(request: Request):
         status, qualified = calculate_funnel_status(payload)
 
         # Actualizar entry
-        result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified, reviewer)
+        result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified)
         
         logger.info("✅ Proceso completado exitosamente")
         return {"status": "success", "message": "Signals procesados correctamente", "entry_id": entry_id}
