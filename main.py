@@ -122,6 +122,7 @@ async def find_entry_from_deal_id(deal_id: str):
             entry_id = data[0].get("id", {}).get("entry_id", "")
             entry_values = data[0].get("values", {})
             logger.info(f"✅ Entry encontrado: {entry_id}")
+            logger.info(entry_values)
             
             return entry_id, entry_values
 
