@@ -181,7 +181,7 @@ def generar_payload(form_data):
     logger.info(f"✅ Payload generado para dominio: {domain}")
     return domain, payload, green_flags, red_flags, comments, reviewer
 
-def calculate_funnel_status(payload):
+def calculate_funnel_status(payload, default_status=None):
     """Calculamos las condiciones del funnel
     -> Usar después de tener el payload completo (con lo antigup y lo nuevo)"""
 
@@ -195,7 +195,10 @@ def calculate_funnel_status(payload):
         return "In play", True
     
     elif num_evaluaciones < 2:
-        return "Qualified", True
+        if default_status == "Qualified":
+            return "Qualified", True
+        else:
+            return "In play", True
 
     elif num_evaluaciones >= 2 and num_red_flags > 0:
         return "Not qualified", False
@@ -315,8 +318,10 @@ async def handle_signals(request: Request):
             red_flags = red_flags + "\n---\n" + existing_reds
             payload = payload + "\n---\n" + existing_value
         
+        default_status_list = entry_values.get("status", [])
+        default_status = default_status_list[0].get("status", "") if default_status_list else ""
         # Vamos a ver el funnel como va
-        status, qualified = calculate_funnel_status(payload)
+        status, qualified = calculate_funnel_status(payload, default_status)
 
         # Actualizar entry
         result = await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified)
