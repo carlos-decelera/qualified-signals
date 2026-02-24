@@ -201,9 +201,9 @@ def calculate_funnel_status(payload, default_status=None):
             return "In play", True
 
     elif num_evaluaciones >= 2 and num_red_flags > 0:
-        return "Not qualified", False
+        return "Killed", False
 
-    return "Not qualified", True
+    return "Killed", True
 
 async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer):
     """Actualizamos los campos de vaidator"""
