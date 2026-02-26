@@ -205,7 +205,7 @@ def calculate_funnel_status(payload, default_status=None):
 
     return "Killed", True
 
-async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer):
+async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
     """Actualizamos los campos de vaidator"""
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     data = {
@@ -217,10 +217,16 @@ async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer):
 
     num_red_flags = payload_single.count("🔴")
 
-    if num_red_flags > 0:
-        data["data"]["entry_values"]["validator_ko"] = [{"option": reviewer}]
-    else:
-        data["data"]["entry_values"]["vallidator_ok"] = [{"option": reviewer}]
+    if tier == "Tier 1":
+        if num_red_flags > 0:
+            data["data"]["entry_values"]["tier_1_ko"] = [{"option": reviewer}]
+        else:
+            data["data"]["entry_values"]["tier_1_ok"] = [{"option": reviewer}]
+    elif tier == "Tier 2":
+        if num_red_flags > 0:
+            data["data"]["entry_values"]["tier_2_ko"] = [{"option": reviewer}]
+        else:
+            data["data"]["entry_values"]["tier_2_ok"] = [{"option": reviewer}]
 
     async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
         try:
@@ -299,7 +305,9 @@ async def handle_signals(request: Request):
             raise HTTPException(status_code=404, detail=f"No se encontró entry para el deal: {deal_id}")
 
         #Ponemos el validator
-        response = await upload_reviewer_ko_ok(entry_id, payload, reviewer)
+        tier_list = entry_values.get("tier_5", [])
+        tier = tier_list[0].get("status", {}).get("title", "") if tier_list else ""
+        response = await upload_reviewer_ko_ok(entry_id, payload, reviewer, tier)
 
         # Concatenar con valor existente (nuevo contenido primero)
         existing_list = entry_values.get("signals_qualified", [])
