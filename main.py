@@ -392,8 +392,9 @@ async def handle_signals(request: Request):
         logger.error(f"Error de validación: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        if hasattr(e, 'response'):
+            logger.error(f"Detalle del error API: {e.response.text}") # Esto te dirá qué campo falla
         logger.error(f"Error inesperado: {e}")
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 @app.get("/health")
