@@ -130,10 +130,6 @@ async def find_entry_from_deal_id(deal_id: str):
             logger.error(f"Error buscando entry: {e}")
             return "", {}
 
-def obtener_senior_al_azar():
-    reviewers = ["Raquel", "Lorenzo"]
-    return random.choice(reviewers)
-
 def generar_payload(form_data):
     """Vamos a sacar unos campos bonitos del form: Resumen, Greens, Reds y Comments"""
     
@@ -261,7 +257,7 @@ async def upload_senior_needed(entry_id, total_ko, total_ok):
     data = {
         "data": {
             "entry_values": {
-                "tier_1_evaluator_2": [{"option": obtener_senior_al_azar()}]
+                "tier_5": [{"option": "Tier 2"}]
             }
         }
     }
