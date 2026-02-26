@@ -3,6 +3,7 @@ import httpx
 import os
 import logging
 import uvicorn
+import random
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AttioSignals")
@@ -129,6 +130,9 @@ async def find_entry_from_deal_id(deal_id: str):
             logger.error(f"Error buscando entry: {e}")
             return "", {}
 
+def obtener_senior_al_azar():
+    reviewers = ["Raquel", "Lorenzo"]
+    return random.choice(reviewers)
 
 def generar_payload(form_data):
     """Vamos a sacar unos campos bonitos del form: Resumen, Greens, Reds y Comments"""
@@ -192,13 +196,13 @@ def calculate_funnel_status(payload, default_status=None):
     logger.info(f"Análisis para el funnel: Evals: {num_evaluaciones}, Greens: {num_green_flags}, Reds: {num_red_flags}")
 
     if num_evaluaciones >= 2 and num_green_flags >= 2 and num_red_flags == 0:
-        return "In play", True
+        return "First interaction", True
     
     elif num_evaluaciones < 2:
-        if default_status == "Qualified":
-            return "Qualified", True
+        if default_status == "Initial screening":
+            return "Initial screening", True
         else:
-            return "In play", True
+            return "First interaction", True
 
     elif num_evaluaciones >= 2 and num_red_flags > 0:
         return "Killed", False
@@ -239,6 +243,33 @@ async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
         except Exception as e:
             logger.error(f"❌ Error al actualizar reviewer: {e}")
             raise
+
+async def upload_senior_needed(entry_id, tier1_ko, tier1_ok):
+    """Si no coinciden los de tier 1, tiene que entrar un senior"""
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    data = {
+        "data": {
+            "entry_values": {
+
+            }
+        }
+    }
+    # Si hay uno de cada, metemos el senior
+    if len(tier1_ko) > 0 and len(tier1_ok) > 0:
+        data["data"]["entry_values"]["tier_1_evaluator_2"] = [{"option": obtener_senior_al_azar()}]
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
+        try:
+            res = await client.patch(url, headers=HEADERS, json=data)  # Agregado await
+            res.raise_for_status()
+
+            logger.info(f"✅ Entry {entry_id} actualizada validator correctamente")
+            return {"status": "success", "entry_id": entry_id}
+            
+        except Exception as e:
+            logger.error(f"❌ Error al actualizar reviewer: {e}")
+            raise
+
 
 async def upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified=True):
     """Actualiza el entry en Attio con los datos del formulario"""
@@ -308,6 +339,12 @@ async def handle_signals(request: Request):
         tier_list = entry_values.get("tier_5", [])
         tier = tier_list[0].get("status", {}).get("title", "") if tier_list else ""
         response = await upload_reviewer_ko_ok(entry_id, payload, reviewer, tier)
+
+        tier1_ko_list = entry_values.get("tier_1_ko", [])
+        tier1_ko = [item.get("option", {}).get("title", "") for item in tier1_ko_list]
+        tier1_ok_list = entry_values.get("tier_1_ok", [])
+        tier1_ok = [item.get("option", {}).get("title", "") for item in tier1_ok_list]
+        response = await upload_senior_needed(entry_id, tier1_ko, tier1_ok)
 
         # Concatenar con valor existente (nuevo contenido primero)
         existing_list = entry_values.get("signals_qualified", [])
