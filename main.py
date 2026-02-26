@@ -340,11 +340,21 @@ async def handle_signals(request: Request):
         tier = tier_list[0].get("status", {}).get("title", "") if tier_list else ""
         response = await upload_reviewer_ko_ok(entry_id, payload, reviewer, tier)
 
-        tier1_ko_list = entry_values.get("tier_1_ko", [])
-        tier1_ko = [item.get("option", {}).get("title", "") for item in tier1_ko_list]
-        tier1_ok_list = entry_values.get("tier_1_ok", [])
-        tier1_ok = [item.get("option", {}).get("title", "") for item in tier1_ok_list]
-        response = await upload_senior_needed(entry_id, tier1_ko, tier1_ok)
+        num_red_flags_actual = payload.count("🔴")
+        actual_ko = [reviewer] if num_red_flags_actual > 0 else []
+        actual_ok = [reviewer] if num_red_flags_actual == 0 else []
+
+        # 2. Sacamos los que ya estaban en Attio (foto antigua)
+        tier1_ko_previo = [item.get("option", {}).get("title", "") for item in entry_values.get("tier_1_ko", [])]
+        tier1_ok_previo = [item.get("option", {}).get("title", "") for item in entry_values.get("tier_1_ok", [])]
+
+        # 3. Sumamos ambos para tener la foto real del presente
+        total_ko = tier1_ko_previo + actual_ko
+        total_ok = tier1_ok_previo + actual_ok
+
+        # 4. Ahora sí, decidimos si hace falta un Senior
+        # Pasamos las listas completas para que la función decida
+        await upload_senior_needed(entry_id, total_ko, total_ok)
 
         # Concatenar con valor existente (nuevo contenido primero)
         existing_list = entry_values.get("signals_qualified", [])
