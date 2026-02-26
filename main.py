@@ -253,11 +253,11 @@ async def upload_senior_needed(entry_id, total_ko, total_ok):
 
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     
-    # Payload para asignar al Senior
+    # Payload para asignar
     data = {
         "data": {
             "entry_values": {
-                "tier_5": [{"option": "Tier 2"}]
+                "tier_5": [{"status": "Tier 2"}]
             }
         }
     }
@@ -376,7 +376,7 @@ async def handle_signals(request: Request):
             payload = payload + "\n---\n" + existing_value
         
         default_status_list = entry_values.get("status", [])
-        default_status = default_status_list[0].get("status", "") if default_status_list else ""
+        default_status = default_status_list[0].get("status", {}).get("title", "") if default_status_list else ""
         # Vamos a ver el funnel como va
         status, qualified = calculate_funnel_status(payload, default_status)
 
