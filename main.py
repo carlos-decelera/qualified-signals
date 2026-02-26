@@ -244,30 +244,36 @@ async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
             logger.error(f"❌ Error al actualizar reviewer: {e}")
             raise
 
-async def upload_senior_needed(entry_id, tier1_ko, tier1_ok):
-    """Si no coinciden los de tier 1, tiene que entrar un senior"""
+async def upload_senior_needed(entry_id, total_ko, total_ok):
+    """
+    Si hay conflicto entre revisores (al menos un KO y al menos un OK),
+    asigna un Senior al azar de la lista.
+    """
+    # Verificamos si hay conflicto
+    hay_conflicto = len(total_ko) > 0 and len(total_ok) > 0
+    
+    if not hay_conflicto:
+        return {"status": "skipped", "message": "No hay conflicto de opiniones"}
+
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    
+    # Payload para asignar al Senior
     data = {
         "data": {
             "entry_values": {
-
+                "tier_1_evaluator_2": [{"option": obtener_senior_al_azar()}]
             }
         }
     }
-    # Si hay uno de cada, metemos el senior
-    if len(tier1_ko) > 0 and len(tier1_ok) > 0:
-        data["data"]["entry_values"]["tier_1_evaluator_2"] = [{"option": obtener_senior_al_azar()}]
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:  # Agregado async y timeout
-        try:
-            res = await client.patch(url, headers=HEADERS, json=data)  # Agregado await
-            res.raise_for_status()
 
-            logger.info(f"✅ Entry {entry_id} actualizada validator correctamente")
-            return {"status": "success", "entry_id": entry_id}
-            
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            res = await client.patch(url, headers=HEADERS, json=data)
+            res.raise_for_status()
+            logger.info(f"✅ Senior asignado a la entry {entry_id} por conflicto")
+            return {"status": "success", "assigned": True}
         except Exception as e:
-            logger.error(f"❌ Error al actualizar reviewer: {e}")
+            logger.error(f"❌ Error al asignar senior: {e}")
             raise
 
 
