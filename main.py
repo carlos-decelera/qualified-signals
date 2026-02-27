@@ -16,7 +16,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Índices de preguntas originales
+# Constantes de índices (Tally)
 REVIEWER_INDEX = 0
 DOMAIN_INDEX = 1
 FLAGS_START = 2
@@ -90,7 +90,10 @@ def generar_payload(form_data):
 
     reviewer = questions[REVIEWER_INDEX].get("value", "")
     domain = questions[DOMAIN_INDEX].get("value", "")
-    comments = questions[COMMENTS_INDEX].get("value", "")
+    comments_raw = questions[COMMENTS_INDEX].get("value", "")
+    
+    # Formateamos el comentario con el nombre del revisor
+    comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
 
     green_flags, red_flags, payload = f"{reviewer}:\n", f"{reviewer}:\n", f"{reviewer}:\n"
 
@@ -109,29 +112,18 @@ def generar_payload(form_data):
 
     return domain, payload, green_flags, red_flags, comments, reviewer
 
-# --- LÓGICA DE DECISIÓN REFORZADA ---
-
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
-    """
-    Si el deal es Tier 2 (por conflicto o directo), necesita 2 votos para status.
-    Si es Tier 1, decide con 2 votos o pasa a Tier 2 si hay conflicto (1-1).
-    """
-    
-    # 1. SI ESTAMOS EN TIER 2 (Directo o por conflicto previo)
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
         if t2_ok >= 2: return "First interaction", True
         if t2_ko >= 2: return "Killed", False
-        # Si no hay 2 votos en T2, no se mueve el status
         return default_status, True
 
-    # 2. SI ESTAMOS EN TIER 1
     if t1_ok >= 2: return "First interaction", True
     if t1_ko >= 2: return "Killed", False
 
-    # 3. ESTADO POR DEFECTO (Mientras se vota el primer/segundo voto de T1)
     return default_status if default_status else "Initial screening", True
 
-# --- ACTIONS EN ATTIO ---
+# --- ACTIONS ATTIO ---
 
 async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
@@ -161,8 +153,10 @@ async def upload_attio_entry(entry_id, payload, green, red, comments, status, qu
         "red_flags_qualified": [{"value": red}],
         "status": [{"status": status}]
     }
+    # Solo subimos el comentario si hay contenido
     if comments and comments.strip():
         entry_values["signals_comments_qualified"] = [{"value": comments}]
+        
     if not qualified:
         entry_values["reason"] = [{"status": "Signals (Qualified)"}]
 
@@ -171,13 +165,13 @@ async def upload_attio_entry(entry_id, payload, green, red, comments, status, qu
         res = await client.patch(url, headers=HEADERS, json=data)
         res.raise_for_status()
 
-# --- WEBHOOK ---
+# --- WEBHOOK PRINCIPAL ---
 
 @app.post("/webhook")
 async def handle_signals(request: Request):
     try:
         form_data = await request.json()
-        domain, payload, green_flags, red_flags, comments, reviewer = generar_payload(form_data)
+        domain, payload, green_flags, red_flags, new_comment, reviewer = generar_payload(form_data)
         
         company_id = await find_company_id_from_domain(domain)
         deal_id = await find_deal_from_company_id(company_id)
@@ -186,20 +180,17 @@ async def handle_signals(request: Request):
         if not entry_id:
             raise HTTPException(status_code=404, detail="Entry no encontrada")
 
-        # 1. Ver en qué Tier estamos ahora mismo
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
         
-        # 2. Registrar el voto en Attio
         await upload_reviewer_ko_ok(entry_id, payload, reviewer, tier_actual)
 
-        # 3. Contar votos acumulados
+        # Conteo de votos
         t1_ok = len(entry_values.get("tier_1_ok", []))
         t1_ko = len(entry_values.get("tier_1_ko", []))
         t2_ok = len(entry_values.get("tier_2_ok", []))
         t2_ko = len(entry_values.get("tier_2_ko", []))
 
-        # Sumar el voto que entra ahora
         if tier_actual == "Tier 1":
             if payload.count("🔴") > 0: t1_ko += 1
             else: t1_ok += 1
@@ -207,7 +198,9 @@ async def handle_signals(request: Request):
             if payload.count("🔴") > 0: t2_ko += 1
             else: t2_ok += 1
 
-        # 4. Concatenar historial de Payloads
+        # --- GESTIÓN DE HISTORIAL (PAYLOAD, FLAGS Y COMENTARIOS) ---
+        
+        # Historial de Payloads y Flags
         ex_payload_list = entry_values.get("signals_qualified", [])
         if ex_payload_list:
             ex_p = ex_payload_list[0].get("value", "")
@@ -217,20 +210,31 @@ async def handle_signals(request: Request):
             green_flags = f"{green_flags}\n---\n{ex_g}"
             red_flags = f"{red_flags}\n---\n{ex_r}"
 
-        # 5. Calcular Status Final considerando si ya estamos en Tier 2
+        # Historial de Comentarios
+        ex_comments_list = entry_values.get("signals_comments_qualified", [])
+        ex_comments = ex_comments_list[0].get("value", "") if ex_comments_list else ""
+        
+        if new_comment:
+            if ex_comments:
+                final_comments = f"{new_comment}\n---\n{ex_comments}"
+            else:
+                final_comments = new_comment
+        else:
+            final_comments = ex_comments # Si no hay comentario nuevo, mantenemos el viejo
+
+        # --- LÓGICA DE STATUS Y TIER 2 ---
+
         current_st_list = entry_values.get("status", [])
         default_status = current_st_list[0].get("status", {}).get("title", "") if current_st_list else ""
-        
         status, qualified = calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status)
 
-        # 6. Si es Tier 1 y acabamos de empatar 1-1, activar Tier 2
         if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
             await upload_senior_needed(entry_id)
 
-        # 7. Update Final
-        await upload_attio_entry(entry_id, payload, green_flags, red_flags, comments, status, qualified)
+        # Guardar todo en Attio (usando final_comments concatenado)
+        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, qualified)
         
-        return {"status": "success", "tier_detectado": tier_actual, "nuevo_status": status}
+        return {"status": "success", "entry_id": entry_id}
 
     except Exception as e:
         logger.error(f"Error: {e}")
