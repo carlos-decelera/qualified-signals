@@ -128,11 +128,12 @@ def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_sta
 async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     num_reds = payload_single.count("🔴")
+    num_greens = payload_single.count("🟢")
     field = ""
     if tier == "Tier 1":
-        field = "tier_1_ko" if num_reds > 0 else "tier_1_ok"
+        field = "tier_1_ok" if num_reds == 0 and num_greens <= 2 else "tier_1_ko"
     elif tier == "Tier 2":
-        field = "tier_2_ko" if num_reds > 0 else "tier_2_ok"
+        field = "tier_2_ok" if num_reds == 0 and num_greens <= 2 else "tier_2_ko"
     
     if not field: return
     data = {"data": {"entry_values": {field: [{"option": reviewer}]}}}
