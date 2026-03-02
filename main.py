@@ -192,11 +192,11 @@ async def handle_signals(request: Request):
         t2_ko = len(entry_values.get("tier_2_ko", []))
 
         if tier_actual == "Tier 1":
-            if payload.count("🔴") > 0 and payload.count("🟢") >= 2: t1_ko += 1
-            else: t1_ok += 1
+            if payload.count("🔴") == 0 and payload.count("🟢") >= 2: t1_ok += 1
+            else: t1_ko += 1
         else:
-            if payload.count("🔴") > 0 and payload.count("🟢") >= 2: t2_ko += 1
-            else: t2_ok += 1
+            if payload.count("🔴") == 0 and payload.count("🟢") >= 2: t2_ok += 1
+            else: t2_ko += 1
 
         # --- GESTIÓN DE HISTORIAL (PAYLOAD, FLAGS Y COMENTARIOS) ---
         
