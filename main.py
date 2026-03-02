@@ -131,9 +131,9 @@ async def upload_reviewer_ko_ok(entry_id, payload_single, reviewer, tier):
     num_greens = payload_single.count("🟢")
     field = ""
     if tier == "Tier 1":
-        field = "tier_1_ok" if num_reds == 0 and num_greens <= 2 else "tier_1_ko"
+        field = "tier_1_ok" if num_reds == 0 and num_greens >= 2 else "tier_1_ko"
     elif tier == "Tier 2":
-        field = "tier_2_ok" if num_reds == 0 and num_greens <= 2 else "tier_2_ko"
+        field = "tier_2_ok" if num_reds == 0 and num_greens >= 2 else "tier_2_ko"
     
     if not field: return
     data = {"data": {"entry_values": {field: [{"option": reviewer}]}}}
