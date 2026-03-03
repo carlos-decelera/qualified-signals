@@ -1,8 +1,8 @@
+from fastapi import FastAPI, Request, HTTPException
+import httpx
 import os
 import logging
-import httpx
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AttioSignals")
@@ -16,152 +16,230 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+# Constantes de índices (Tally) - Basado en tu estructura original
+REVIEWER_INDEX = 0
+DOMAIN_INDEX = 1
+FLAGS_START = 2
+FLAGS_END = 9
+MULTI_FLAGS_START = 9
+MULTI_FLAGS_END = 11
+COMMENTS_INDEX = 11
+
 app = FastAPI()
 
-# --- FUNCIÓN DE BÚSQUEDA SEGURA (ADIÓS AL INDEX ERROR) ---
-def get_value_by_label(questions, label_substring):
-    """Busca una pregunta que contenga cierto texto en su título y devuelve el valor."""
-    for q in questions:
-        label = q.get("label", "")
-        if label_substring.lower() in label.lower():
-            return q.get("value", "")
-    return ""
+# ---FUNCIONES AUXILIARES---
 
-def validar_tesis_decelera(flags_list):
-    signals = {}
-    for i in range(1, 8):
-        match = next((s for s in flags_list if f"Signal {i}" in s), "")
-        signals[i] = match
-
-    gk_ok = all("🟢" in signals.get(i, "") for i in [1, 2, 7])
-    comp_greens = sum(1 for i in [3, 4, 5, 6] if "🟢" in signals.get(i, ""))
-    comp_ok = comp_greens >= 2
-
-    es_aprobado = gk_ok and comp_ok
-    resumen = f"Gatekeepers: {'✅' if gk_ok else '❌'} | Compensadores: {'✅' if comp_ok else '❌'} ({comp_greens}/4)"
-    return es_aprobado, resumen
-
-# --- FUNCIONES ATTIO (ESTABLES) ---
 async def find_company_id_from_domain(domain: str) -> str:
     url = f"{BASE_URL}/objects/companies/records/query"
     payload = {"filter": {"domains": {"domain": domain}}, "limit": 1}
     async with httpx.AsyncClient(timeout=30.0) as client:
-        res = await client.post(url, headers=HEADERS, json=payload)
-        data = res.json().get("data", [])
-        return data[0].get("id", {}).get("record_id", "") if data else ""
+        try:
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
+            return data[0].get("id", {}).get("record_id", "") if data else ""
+        except Exception as e:
+            logger.error(f"Error buscando compañía: {e}")
+            return ""
 
 async def find_deal_from_company_id(company_id: str) -> str:
     url = f"{BASE_URL}/objects/deals/records/query"
-    payload = {"filter": {"associated_company": {"target_object": "companies", "target_record_id": company_id}}, "limit": 1}
+    payload = {
+        "filter": {
+            "associated_company": {
+                "target_object": "companies",
+                "target_record_id": company_id
+            }
+        },
+        "limit": 1
+    }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        res = await client.post(url, headers=HEADERS, json=payload)
-        data = res.json().get("data", [])
-        return data[0].get("id", {}).get("record_id", "") if data else ""
+        try:
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
+            return data[0].get("id", {}).get("record_id", "") if data else ""
+        except Exception as e:
+            logger.error(f"Error buscando deal: {e}")
+            return ""
 
 async def find_entry_from_deal_id(deal_id: str):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/query"
-    payload = {"filter": {"path": [[LIST_SLUG, "parent_record"], ["deals", "record_id"]], "constraints": {"value": deal_id}}, "limit": 1}
+    payload = {
+        "filter": {
+            "path": [[LIST_SLUG, "parent_record"], ["deals", "record_id"]],
+            "constraints": {"value": deal_id}
+        },
+        "limit": 1
+    }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        res = await client.post(url, headers=HEADERS, json=payload)
-        data = res.json().get("data", [])
-        if not data: return "", {}
-        return data[0].get("id", {}).get("entry_id", ""), data[0].get("entry_values", {})
+        try:
+            res = await client.post(url, headers=HEADERS, json=payload)
+            res.raise_for_status()
+            data = res.json().get("data", [])
+            if not data: return "", {}
+            return data[0].get("id", {}).get("entry_id", ""), data[0].get("entry_values", {})
+        except Exception as e:
+            logger.error(f"Error buscando entry: {e}")
+            return "", {}
 
-# --- WEBHOOK ---
+def generar_payload(form_data):
+    questions = form_data.get("submission", {}).get("questions", [])
+    if len(questions) < COMMENTS_INDEX + 1:
+        raise ValueError("Form data incompleto")
+
+    reviewer = questions[REVIEWER_INDEX].get("value", "")
+    domain = questions[DOMAIN_INDEX].get("value", "")
+    comments_raw = questions[COMMENTS_INDEX].get("value", "")
+    
+    comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
+    green_flags, red_flags, payload = f"{reviewer}:\n", f"{reviewer}:\n", f"{reviewer}:\n"
+
+    # --- LÓGICA DE DECISIÓN (LA FOTO) ---
+    # Extraemos los valores de las 7 señales (S1 a S7)
+    s_vals = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
+    
+    # 1. Gatekeepers: S1 (0), S2 (1) y S7 (6). Deben ser verdes.
+    gk_ok = all("🟢" in s_vals[i] for i in [0, 1, 6])
+    
+    # 2. Compensadores: S3, S4, S5, S6 (índices 2, 3, 4, 5). Min 2 verdes.
+    comp_greens = sum(1 for i in [2, 3, 4, 5] if "🟢" in s_vals[i])
+    comp_ok = comp_greens >= 2
+
+    es_voto_ok = gk_ok and comp_ok
+    # ------------------------------------
+
+    all_flags_list = questions[FLAGS_START:FLAGS_END]
+    for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
+        val = q.get("value")
+        if isinstance(val, list):
+            for item in val: all_flags_list.append({"value": item})
+
+    for question in all_flags_list:
+        flag = question.get("value", "")
+        if not flag: continue
+        payload += f"{flag}\n"
+        if "🟢" in flag: green_flags += f"{flag}\n"
+        elif "🔴" in flag: red_flags += f"{flag}\n"
+
+    return domain, payload, green_flags, red_flags, comments, reviewer, es_voto_ok
+
+def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
+    if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
+        if t2_ok >= 2: return "First interaction", True
+        if t2_ko >= 2: return "Killed", False
+        return default_status, True
+
+    if t1_ok >= 2: return "First interaction", True
+    if t1_ko >= 2: return "Killed", False
+
+    return default_status if default_status else "Initial screening", True
+
+async def upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier):
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    field = ""
+    if tier == "Tier 1":
+        field = "tier_1_ok" if es_voto_ok else "tier_1_ko"
+    elif tier == "Tier 2":
+        field = "tier_2_ok" if es_voto_ok else "tier_2_ko"
+    
+    if not field: return
+    data = {"data": {"entry_values": {field: [{"option": reviewer}]}}}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await client.patch(url, headers=HEADERS, json=data)
+
+async def upload_senior_needed(entry_id):
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    data = {"data": {"entry_values": {"tier_5": [{"status": "Tier 2"}]}}}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        await client.patch(url, headers=HEADERS, json=data)
+
+async def upload_attio_entry(entry_id, payload, green, red, comments, status, qualified=True):
+    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+    entry_values = {
+        "signals_qualified": [{"value": payload}],
+        "green_flags_qualified": [{"value": green}],
+        "red_flags_qualified": [{"value": red}],
+        "status": [{"status": status}]
+    }
+    if comments and comments.strip():
+        entry_values["signals_comments_qualified"] = [{"value": comments}]
+        
+    if not qualified:
+        entry_values["reason"] = [{"status": "Signals (Qualified)"}]
+
+    data = {"data": {"entry_values": entry_values}}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        res = await client.patch(url, headers=HEADERS, json=data)
+        res.raise_for_status()
+
+# --- WEBHOOK PRINCIPAL ---
 
 @app.post("/webhook")
 async def handle_signals(request: Request):
     try:
         form_data = await request.json()
-        questions = form_data.get("submission", {}).get("questions", [])
+        # Ahora devuelve es_voto_ok
+        domain, payload, green_flags, red_flags, new_comment, reviewer, es_voto_ok = generar_payload(form_data)
         
-        # --- EXTRACCIÓN POR NOMBRE (MÁS ROBUSTO QUE EL ÍNDICE) ---
-        reviewer = get_value_by_label(questions, "revisor") or get_value_by_label(questions, "nombre")
-        domain = get_value_by_label(questions, "dominio") or get_value_by_label(questions, "web")
-        comments_raw = get_value_by_label(questions, "comentario") or get_value_by_label(questions, "feedback")
-        
-        # Extraemos los signals (esto no da error de índice porque es un bucle sobre lo que existe)
-        all_flags_list = []
-        for q in questions:
-            val = q.get("value")
-            # Si es un string con "Signal" o una lista (multi-select)
-            if isinstance(val, str) and "Signal" in val:
-                all_flags_list.append(val)
-            elif isinstance(val, list):
-                for item in val:
-                    if isinstance(item, str) and "Signal" in item:
-                        all_flags_list.append(item)
-
-        # Lógica Decelera
-        es_aprobado, resumen_tesis = validar_tesis_decelera(all_flags_list)
-
-        # Flujo Attio
         company_id = await find_company_id_from_domain(domain)
         deal_id = await find_deal_from_company_id(company_id)
         entry_id, entry_values = await find_entry_from_deal_id(deal_id)
 
-        if not entry_id: return {"status": "error", "message": "Entry not found"}
+        if not entry_id:
+            raise HTTPException(status_code=404, detail="Entry no encontrada")
 
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
         
+        # Paso 2: Usar el voto OK/KO para subir al evaluador
+        await upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier_actual)
+
         t1_ok = len(entry_values.get("tier_1_ok", []))
         t1_ko = len(entry_values.get("tier_1_ko", []))
         t2_ok = len(entry_values.get("tier_2_ok", []))
         t2_ko = len(entry_values.get("tier_2_ko", []))
 
+        # Sumamos el voto actual al conteo basado en la lógica de la foto
         if tier_actual == "Tier 1":
-            if es_aprobado: t1_ok += 1
+            if es_voto_ok: t1_ok += 1
             else: t1_ko += 1
         else:
-            if es_aprobado: t2_ok += 1
+            if es_voto_ok: t2_ok += 1
             else: t2_ko += 1
 
-        # Construir Payload
-        voto_label = "✅ OK" if es_aprobado else "🔴 KO"
-        nuevo_p = f"{reviewer} ({voto_label}):\n{resumen_tesis}\n" + "\n".join(all_flags_list)
-        new_g = f"{reviewer}: " + " ".join([f for f in all_flags_list if "🟢" in f])
-        new_r = f"{reviewer}: " + " ".join([f for f in all_flags_list if "🔴" in f or "🟡" in f])
+        # Gestión de historial
+        ex_payload_list = entry_values.get("signals_qualified", [])
+        if ex_payload_list:
+            ex_p = ex_payload_list[0].get("value", "")
+            ex_g = entry_values.get("green_flags_qualified", [{}])[0].get("value", "")
+            ex_r = entry_values.get("red_flags_qualified", [{}])[0].get("value", "")
+            payload = f"{payload}\n---\n{ex_p}"
+            green_flags = f"{green_flags}\n---\n{ex_g}"
+            red_flags = f"{red_flags}\n---\n{ex_r}"
 
-        def concat(nuevo, field):
-            ex = entry_values.get(field, [{}])[0].get("value", "")
-            return f"{nuevo}\n---\n{ex}" if ex else nuevo
-
-        final_attio_data = {
-            "signals_qualified": [{"value": concat(nuevo_p, "signals_qualified")}],
-            "green_flags_qualified": [{"value": concat(new_g, "green_flags_qualified")}],
-            "red_flags_qualified": [{"value": concat(new_r, "red_flags_qualified")}],
-            "status": [{"status": (await find_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, entry_values))[0]}]
-        }
-
-        # Comentario
-        if comments_raw:
-            new_comm = f"{reviewer}: {comments_raw}"
-            final_attio_data["signals_comments_qualified"] = [{"value": concat(new_comm, "signals_comments_qualified")}]
-
-        # Marcar voto
-        v_field = (f"tier_{'1' if tier_actual == 'Tier 1' else '2'}_{'ok' if es_aprobado else 'ko'}")
-        final_attio_data[v_field] = [{"option": reviewer}]
-
-        # Patch
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            await client.patch(f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}", headers=HEADERS, json={"data": {"entry_values": final_attio_data}})
+        ex_comments_list = entry_values.get("signals_comments_qualified", [])
+        ex_comments = ex_comments_list[0].get("value", "") if ex_comments_list else ""
         
-        return {"status": "success"}
+        if new_comment:
+            final_comments = f"{new_comment}\n---\n{ex_comments}" if ex_comments else new_comment
+        else:
+            final_comments = ex_comments
+
+        current_st_list = entry_values.get("status", [])
+        default_status = current_st_list[0].get("status", {}).get("title", "") if current_st_list else ""
+        status, qualified = calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status)
+
+        if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
+            await upload_senior_needed(entry_id)
+
+        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, qualified)
+        
+        return {"status": "success", "veredicto": "OK" if es_voto_ok else "KO"}
 
     except Exception as e:
         logger.error(f"Error: {e}")
-        return {"status": "error", "detail": str(e)}
-
-async def find_status(tier, t1ok, t1ko, t2ok, t2ko, ev):
-    current = ev.get("status", [{}])[0].get("status", {}).get("title", "Initial screening")
-    if tier == "Tier 2" or (t1ok >= 1 and t1ko >= 1):
-        if t2ok >= 2: return "First interaction", True
-        if t2ko >= 2: return "Killed", False
-        return current, True
-    if t1ok >= 2: return "First interaction", True
-    if t1ko >= 2: return "Killed", False
-    return current, True
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
