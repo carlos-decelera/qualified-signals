@@ -113,9 +113,9 @@ def generar_payload(form_data):
     es_voto_ok = gk_ok and comp_ok
 
     # --- CONSTRUCCIÓN DEL RESUMEN ---
-    voto_status = "✅ PASA" if es_voto_ok else "🔴 KO"
-    payload = f"**Analista: {reviewer}**\n"
-    payload += f"**Veredicto: {voto_status}**\n\n"
+    voto_status = "✅" if es_voto_ok else "🔴"
+    payload = f"Reviewer: {reviewer}\n"
+    payload += f"Veredicto: {voto_status}\n\n"
     payload += f"Gatekeepers (S1, S2, S7): {'🟢 OK' if gk_ok else '❌ VETO'}\n"
     payload += f"Compensadores (S3-S6): {'🟢 OK' if comp_ok else '❌ KO'} ({comp_greens}/4 verdes)\n"
     payload += "\n-- DETALLE --\n"
