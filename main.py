@@ -16,7 +16,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Constantes de índices (Tally) - Basado en tu estructura original
+# Constantes de índices (Tally) - Tus originales
 REVIEWER_INDEX = 0
 DOMAIN_INDEX = 1
 FLAGS_START = 2
@@ -95,38 +95,35 @@ def generar_payload(form_data):
     comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
     green_flags, red_flags = f"{reviewer}:\n", f"{reviewer}:\n"
 
-    # --- LÓGICA DE DECISIÓN (MANTENIDA) ---
-    s_vals = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
-    
-    gk_ok = all("🟢" in s_vals[i] for i in [0, 1, 6])
-    comp_greens = sum(1 for i in [2, 3, 4, 5] if "🟢" in s_vals[i])
-    comp_ok = comp_greens >= 2
-    es_voto_ok = gk_ok and comp_ok
-
-    # --- NUEVA CONSTRUCCIÓN DEL RESUMEN (PAYLOAD) ---
-    # Esto es lo que verás en la columna "Signals Qualified" de Attio
-    voto_status = "✅ PASA" if es_voto_ok else "🔴 KO"
-    
-    payload = f"**Reviewer: {reviewer}**\n"
-    payload += f"**Veredicto: {voto_status}**\n\n"
-    
-    payload += f"Gatekeepers (S1, S2, S7): {'🟢 OK' if gk_ok else '❌ VETO'}\n"
-    payload += f"Compensadores (S3-S6): {'🟢 OK' if comp_ok else '❌ KO'} ({comp_greens}/4 verdes)\n"
-    payload += "\n-- DETALLE --\n"
-
-    # Seguimos con tu lógica original para llenar el detalle y las flags
+    # --- RECONSTRUCCIÓN DE TU LÓGICA DE EXTRACCIÓN ORIGINAL ---
+    # Esto evita el error de "index out of range"
     all_flags_list = questions[FLAGS_START:FLAGS_END]
     for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         val = q.get("value")
         if isinstance(val, list):
             for item in val: all_flags_list.append({"value": item})
 
+    # --- LÓGICA DE DECISIÓN (LA FOTO) ---
+    # Usamos los 7 primeros elementos de all_flags_list (S1-S7)
+    s_vals = [f.get("value", "") for f in all_flags_list[:7]]
+    
+    gk_ok = all("🟢" in s_vals[i] for i in [0, 1, 6]) if len(s_vals) >= 7 else False
+    comp_greens = sum(1 for i in [2, 3, 4, 5] if i < len(s_vals) and "🟢" in s_vals[i])
+    comp_ok = comp_greens >= 2
+    es_voto_ok = gk_ok and comp_ok
+
+    # --- CONSTRUCCIÓN DEL RESUMEN ---
+    voto_status = "✅ PASA" if es_voto_ok else "🔴 KO"
+    payload = f"**Analista: {reviewer}**\n"
+    payload += f"**Veredicto: {voto_status}**\n\n"
+    payload += f"Gatekeepers (S1, S2, S7): {'🟢 OK' if gk_ok else '❌ VETO'}\n"
+    payload += f"Compensadores (S3-S6): {'🟢 OK' if comp_ok else '❌ KO'} ({comp_greens}/4 verdes)\n"
+    payload += "\n-- DETALLE --\n"
+
     for question in all_flags_list:
         flag = question.get("value", "")
         if not flag: continue
-        # Añadimos cada señal al bloque de detalle del payload
         payload += f"{flag}\n"
-        
         if "🟢" in flag: green_flags += f"{flag}\n"
         elif "🔴" in flag: red_flags += f"{flag}\n"
 
@@ -187,7 +184,6 @@ async def upload_attio_entry(entry_id, payload, green, red, comments, status, qu
 async def handle_signals(request: Request):
     try:
         form_data = await request.json()
-        # Ahora devuelve es_voto_ok
         domain, payload, green_flags, red_flags, new_comment, reviewer, es_voto_ok = generar_payload(form_data)
         
         company_id = await find_company_id_from_domain(domain)
@@ -200,7 +196,6 @@ async def handle_signals(request: Request):
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
         
-        # Paso 2: Usar el voto OK/KO para subir al evaluador
         await upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier_actual)
 
         t1_ok = len(entry_values.get("tier_1_ok", []))
@@ -208,7 +203,6 @@ async def handle_signals(request: Request):
         t2_ok = len(entry_values.get("tier_2_ok", []))
         t2_ko = len(entry_values.get("tier_2_ko", []))
 
-        # Sumamos el voto actual al conteo basado en la lógica de la foto
         if tier_actual == "Tier 1":
             if es_voto_ok: t1_ok += 1
             else: t1_ko += 1
@@ -216,7 +210,6 @@ async def handle_signals(request: Request):
             if es_voto_ok: t2_ok += 1
             else: t2_ko += 1
 
-        # Gestión de historial
         ex_payload_list = entry_values.get("signals_qualified", [])
         if ex_payload_list:
             ex_p = ex_payload_list[0].get("value", "")
