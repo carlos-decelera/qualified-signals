@@ -16,7 +16,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# Tus constantes originales
+# Constantes de índices (Tally) - Mantengo las tuyas
 REVIEWER_INDEX = 0
 DOMAIN_INDEX = 1
 FLAGS_START = 2
@@ -27,37 +27,35 @@ COMMENTS_INDEX = 11
 
 app = FastAPI()
 
-# --- NUEVA LÓGICA DE VALIDACIÓN (LA FOTO) ---
+# --- FUNCIONES AUXILIARES (LOGICA DE LA FOTO) ---
 
-def aplicar_tesis_decelera(flags_list):
+def validar_tesis_decelera(flags_list):
     """
-    Recibe la lista de strings (ej: ['Signal 1 -> 🟢', 'Signal 2 -> 🔴', ...])
-    y decide si es un pase o un KO según la imagen.
+    Analiza la lista de strings extraída del form.
+    Gatekeepers (1, 2, 7) -> Necesitan 🟢. 🔴 o 🟡 es KO.
+    Compensadores (3, 4, 5, 6) -> Necesitan al menos 2 🟢.
     """
-    # 1. Convertimos la lista en un diccionario para buscar fácil
-    # Buscamos si el string contiene "Signal X" y qué emoji tiene
-    d = {}
+    # Mapeamos qué tiene cada señal buscando el texto en la lista
+    signals = {}
     for i in range(1, 8):
-        # Buscamos el emoji para la señal i
-        found = next((f for f in flags_list if f"Signal {i}" in f), "")
-        d[i] = found
+        # Buscamos el string que contenga "Signal X"
+        match = next((s for s in flags_list if f"Signal {i}" in s), "")
+        signals[i] = match
 
-    # 2. Gatekeepers (S1, S2, S7): 3 Verdes obligatorios. Rojo/Amarillo = KO.
-    # Si alguno NO tiene el verde, es KO.
-    gk_ok = all("🟢" in d.get(i, "") for i in [1, 2, 7])
+    # 1. Gatekeepers: S1, S2, S7 deben ser verdes.
+    # Si alguno NO tiene el verde (es rojo, amarillo o no está), es KO.
+    gk_ok = all("🟢" in signals.get(i, "") for i in [1, 2, 7])
 
-    # 3. Compensadores (S3, S4, S5, S6): Mínimo 2 Verdes.
-    comp_greens = sum(1 for i in [3, 4, 5, 6] if "🟢" in d.get(i, ""))
+    # 2. Compensadores: S3, S4, S5, S6. Contamos verdes.
+    comp_greens = sum(1 for i in [3, 4, 5, 6] if "🟢" in signals.get(i, ""))
     comp_ok = comp_greens >= 2
 
     es_aprobado = gk_ok and comp_ok
-
-    # Creamos un resumen visual para el historial
-    resumen = f"Gatekeepers: {'✅' if gk_ok else '❌'} | Compensadores: {'✅' if comp_ok else '❌'} ({comp_greens}/4)"
+    resumen = f"Gatekeepers: {'✅' if gk_ok else '❌'} | Compensadores: {'✅' if comp_ok else '❌'} ({comp_greens}/4 verdes)"
     
     return es_aprobado, resumen
 
-# --- FUNCIONES AUXILIARES ORIGINALES ---
+# --- FUNCIONES ATTIO (SIN CAMBIOS) ---
 
 async def find_company_id_from_domain(domain: str) -> str:
     url = f"{BASE_URL}/objects/companies/records/query"
@@ -108,14 +106,7 @@ def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_sta
     if t1_ko >= 2: return "Killed", False
     return default_status if default_status else "Initial screening", True
 
-async def upload_attio_entry(entry_id, payload_values):
-    url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
-    data = {"data": {"entry_values": payload_values}}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        res = await client.patch(url, headers=HEADERS, json=data)
-        res.raise_for_status()
-
-# --- WEBHOOK PRINCIPAL ---
+# --- WEBHOOK ---
 
 @app.post("/webhook")
 async def handle_signals(request: Request):
@@ -123,35 +114,37 @@ async def handle_signals(request: Request):
         form_data = await request.json()
         questions = form_data.get("submission", {}).get("questions", [])
         
-        # Mantenemos tu lógica de extracción original exacta
-        reviewer = questions[REVIEWER_INDEX].get("value", "")
-        domain = questions[DOMAIN_INDEX].get("value", "")
-        comments_raw = questions[COMMENTS_INDEX].get("value", "")
+        # --- EXTRACCIÓN ORIGINAL (CON SEGURIDAD PARA EVITAR INDEX ERROR) ---
+        
+        reviewer = questions[REVIEWER_INDEX].get("value", "") if len(questions) > REVIEWER_INDEX else "Unknown"
+        domain = questions[DOMAIN_INDEX].get("value", "") if len(questions) > DOMAIN_INDEX else ""
+        
+        # Comentarios (Suele dar error si no se rellena, por eso validamos el largo)
+        comments_raw = questions[COMMENTS_INDEX].get("value", "") if len(questions) > COMMENTS_INDEX else ""
         new_comment = f"{reviewer}: {comments_raw}" if comments_raw else ""
 
         all_flags_list = []
-        # Tu bucle original de flags
+        # Bucle original de flags individuales
         for q in questions[FLAGS_START:FLAGS_END]:
             val = q.get("value", "")
             if val: all_flags_list.append(val)
         
-        # Tu bucle original de multi-flags
+        # Bucle original de multi-flags
         for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
             val = q.get("value")
             if isinstance(val, list):
                 for item in val: all_flags_list.append(item)
 
-        # APLICAMOS LA LÓGICA DE LA FOTO SOBRE LA LISTA EXTRAÍDA
-        es_aprobado, resumen_tesis = aplicar_tesis_decelera(all_flags_list)
+        # --- APLICAR LÓGICA DE LA FOTO ---
+        es_aprobado, resumen_tesis = validar_tesis_decelera(all_flags_list)
 
-        # Buscar IDs en Attio
+        # --- FLUJO ATTIO ---
         company_id = await find_company_id_from_domain(domain)
         deal_id = await find_deal_from_company_id(company_id)
         entry_id, entry_values = await find_entry_from_deal_id(deal_id)
 
         if not entry_id: raise HTTPException(status_code=404, detail="Entry no encontrada")
 
-        # Conteo de votos (Tier)
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
         
@@ -167,14 +160,12 @@ async def handle_signals(request: Request):
             if es_aprobado: t2_ok += 1
             else: t2_ko += 1
 
-        # --- GESTIÓN DE HISTORIAL (PAYLOADS, FLAGS Y COMENTARIOS) ---
+        # --- HISTORIAL ---
+        voto_label = "✅ OK" if es_aprobado else "🔴 KO"
+        nuevo_payload_text = f"{reviewer} ({voto_label}):\n{resumen_tesis}\n" + "\n".join(all_flags_list)
         
-        # Construimos el bloque nuevo
-        voto_str = "✅ OK" if es_aprobado else "🔴 KO"
-        nuevo_payload_text = f"{reviewer} ({voto_str}):\n{resumen_tesis}\n" + "\n".join(all_flags_list)
-        
-        new_green = f"{reviewer}: " + "\n".join([f for f in all_flags_list if "🟢" in f])
-        new_red = f"{reviewer}: " + "\n".join([f for f in all_flags_list if "🔴" in f or "🟡" in f])
+        new_green = f"{reviewer}: " + " ".join([f for f in all_flags_list if "🟢" in f])
+        new_red = f"{reviewer}: " + " ".join([f for f in all_flags_list if "🔴" in f or "🟡" in f])
 
         def concat(nuevo, field):
             ex = entry_values.get(field, [{}])[0].get("value", "")
@@ -187,13 +178,12 @@ async def handle_signals(request: Request):
         ex_comments = entry_values.get("signals_comments_qualified", [{}])[0].get("value", "")
         final_comments = f"{new_comment}\n---\n{ex_comments}" if (new_comment and ex_comments) else (new_comment or ex_comments)
 
-        # Status y Tier 2
+        # --- STATUS Y ENVÍO ---
         current_st_list = entry_values.get("status", [])
         default_status = current_st_list[0].get("status", {}).get("title", "") if current_st_list else ""
         status, qualified = calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status)
 
-        # Preparar Payload Final para Attio
-        final_attio_data = {
+        payload_attio = {
             "signals_qualified": [{"value": final_payload}],
             "green_flags_qualified": [{"value": final_green}],
             "red_flags_qualified": [{"value": final_red}],
@@ -201,26 +191,28 @@ async def handle_signals(request: Request):
             "status": [{"status": status}]
         }
 
-        # Lógica de Conflicto Tier 1
+        # Conflicto Tier 1 -> Mover a Tier 2
         if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
-            final_attio_data["tier_5"] = [{"status": "Tier 2"}]
+            payload_attio["tier_5"] = [{"status": "Tier 2"}]
 
-        # Marcar quién votó
-        voter_field = ""
+        # Marcar quién votó en la columna correspondiente
+        v_field = ""
         if tier_actual == "Tier 1":
-            voter_field = "tier_1_ok" if es_aprobado else "tier_1_ko"
+            v_field = "tier_1_ok" if es_aprobado else "tier_1_ko"
         else:
-            voter_field = "tier_2_ok" if es_aprobado else "tier_2_ko"
-        
-        final_attio_data[voter_field] = [{"option": reviewer}]
+            v_field = "tier_2_ok" if es_aprobado else "tier_2_ko"
+        payload_attio[v_field] = [{"option": reviewer}]
 
         if not qualified:
-            final_attio_data["reason"] = [{"status": "Signals (Qualified)"}]
+            payload_attio["reason"] = [{"status": "Signals (Qualified)"}]
 
-        # SUBIR TODO
-        await upload_attio_entry(entry_id, final_attio_data)
+        # Patch final
+        url_patch = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.patch(url_patch, headers=HEADERS, json={"data": {"entry_values": payload_attio}})
+            res.raise_for_status()
         
-        return {"status": "success", "es_aprobado": es_aprobado}
+        return {"status": "success", "veredicto": "OK" if es_aprobado else "KO"}
 
     except Exception as e:
         logger.error(f"Error: {e}")
