@@ -93,22 +93,28 @@ def generar_payload(form_data):
     comments_raw = questions[COMMENTS_INDEX].get("value", "")
     
     comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
-    green_flags, red_flags, payload = f"{reviewer}:\n", f"{reviewer}:\n", f"{reviewer}:\n"
+    green_flags, red_flags = f"{reviewer}:\n", f"{reviewer}:\n"
 
-    # --- LÓGICA DE DECISIÓN (LA FOTO) ---
-    # Extraemos los valores de las 7 señales (S1 a S7)
+    # --- LÓGICA DE DECISIÓN (MANTENIDA) ---
     s_vals = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
     
-    # 1. Gatekeepers: S1 (0), S2 (1) y S7 (6). Deben ser verdes.
     gk_ok = all("🟢" in s_vals[i] for i in [0, 1, 6])
-    
-    # 2. Compensadores: S3, S4, S5, S6 (índices 2, 3, 4, 5). Min 2 verdes.
     comp_greens = sum(1 for i in [2, 3, 4, 5] if "🟢" in s_vals[i])
     comp_ok = comp_greens >= 2
-
     es_voto_ok = gk_ok and comp_ok
-    # ------------------------------------
 
+    # --- NUEVA CONSTRUCCIÓN DEL RESUMEN (PAYLOAD) ---
+    # Esto es lo que verás en la columna "Signals Qualified" de Attio
+    voto_status = "✅ PASA" if es_voto_ok else "🔴 KO"
+    
+    payload = f"**Reviewer: {reviewer}**\n"
+    payload += f"**Veredicto: {voto_status}**\n\n"
+    
+    payload += f"Gatekeepers (S1, S2, S7): {'🟢 OK' if gk_ok else '❌ VETO'}\n"
+    payload += f"Compensadores (S3-S6): {'🟢 OK' if comp_ok else '❌ KO'} ({comp_greens}/4 verdes)\n"
+    payload += "\n-- DETALLE --\n"
+
+    # Seguimos con tu lógica original para llenar el detalle y las flags
     all_flags_list = questions[FLAGS_START:FLAGS_END]
     for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         val = q.get("value")
@@ -118,7 +124,9 @@ def generar_payload(form_data):
     for question in all_flags_list:
         flag = question.get("value", "")
         if not flag: continue
+        # Añadimos cada señal al bloque de detalle del payload
         payload += f"{flag}\n"
+        
         if "🟢" in flag: green_flags += f"{flag}\n"
         elif "🔴" in flag: red_flags += f"{flag}\n"
 
