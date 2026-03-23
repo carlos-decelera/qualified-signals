@@ -83,7 +83,7 @@ async def find_entry_from_deal_id(deal_id: str):
             logger.error(f"Error buscando entry: {e}")
             return "", {}
 
-def generar_payload(form_data):
+def generar_payload(form_data, tier_actual="Tier 1"):
     questions = form_data.get("submission", {}).get("questions", [])
     if len(questions) < COMMENTS_INDEX + 1:
         raise ValueError("Form data incompleto")
@@ -92,41 +92,64 @@ def generar_payload(form_data):
     domain = questions[DOMAIN_INDEX].get("value", "")
     comments_raw = questions[COMMENTS_INDEX].get("value", "")
     
-    comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
-    green_flags, red_flags = f"{reviewer}:\n", f"{reviewer}:\n"
-
-    # --- RECONSTRUCCIÓN DE TU LÓGICA DE EXTRACCIÓN ORIGINAL ---
-    # Esto evita el error de "index out of range"
+    # --- RECONSTRUCCIÓN DE LISTA DE FLAGS ---
     all_flags_list = questions[FLAGS_START:FLAGS_END]
     for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         val = q.get("value")
         if isinstance(val, list):
             for item in val: all_flags_list.append({"value": item})
 
-    # --- LÓGICA DE DECISIÓN (LA FOTO) ---
-    # Usamos los 7 primeros elementos de all_flags_list (S1-S7)
-    s_vals = [f.get("value", "") for f in all_flags_list[:7]]
+    # Extraemos solo el texto de los valores (ej: "🟢 OK")
+    s_vals = [f.get("value", "") for f in all_flags_list]
     
-    gk_ok = all("🟢" in s_vals[i] for i in [0, 1, 6]) if len(s_vals) >= 7 else False
-    comp_greens = sum(1 for i in [2, 3, 4, 5] if i < len(s_vals) and "🟢" in s_vals[i])
-    comp_ok = comp_greens >= 2
-    es_voto_ok = gk_ok and comp_ok
+    # --- NUEVA LÓGICA DE CRITERIO ---
+    def check_criteria(vals, tier):
+        if len(vals) < 7: return False
+        
+        # P1 (Índice 0)
+        p1 = vals[0]
+        # P2, P3, P4 (Índices 1, 2, 3)
+        grupo_a = vals[1:4]
+        # P5, P6, P7 (Índices 4, 7) - asumiendo que el orden sigue hasta el 7
+        grupo_b = vals[4:7]
 
-    # --- CONSTRUCCIÓN DEL RESUMEN ---
+        if tier == "Tier 1":
+            # P1: Verde
+            cond1 = "🟢" in p1
+            # P2-P4: Mínimo 2 verdes, 0 rojos
+            cond2 = sum(1 for v in grupo_a if "🟢" in v) >= 2 and not any("🔴" in v for v in grupo_a)
+            # P5-P7: Mínimo 1 verde, 0 rojos
+            cond3 = sum(1 for v in grupo_b if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_b)
+            return cond1 and cond2 and cond3
+
+        elif tier == "Tier 2":
+            # P1: Verde o Amarillo
+            cond1 = "🟢" in p1 or "🟡" in p1
+            # P2-P4: Mínimo 1 verde, 0 rojos
+            cond2 = sum(1 for v in grupo_a if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_a)
+            # P5-P7: Mínimo 1 verde, 0 rojos
+            cond3 = sum(1 for v in grupo_b if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_b)
+            return cond1 and cond2 and cond3
+        
+        return False
+
+    es_voto_ok = check_criteria(s_vals, tier_actual)
+
+    # --- CONSTRUCCIÓN DEL RESUMEN (PAYLOAD) ---
     voto_status = "✅" if es_voto_ok else "🔴"
-    payload = f"Reviewer: {reviewer}\n"
-    payload += f"Veredicto: {voto_status}\n\n"
-    payload += f"Gatekeepers (S1, S2, S7): {'🟢 OK' if gk_ok else '❌ VETO'}\n"
-    payload += f"Compensadores (S3-S6): {'🟢 OK' if comp_ok else '❌ KO'} ({comp_greens}/4 verdes)\n"
+    payload = f"Reviewer: {reviewer} ({tier_actual})\n"
+    payload += f"Veredicto: {voto_status}\n"
     payload += "\n-- DETALLE --\n"
 
-    for question in all_flags_list:
-        flag = question.get("value", "")
+    green_flags, red_flags = f"{reviewer}:\n", f"{reviewer}:\n"
+    for flag in s_vals:
         if not flag: continue
         payload += f"{flag}\n"
         if "🟢" in flag: green_flags += f"{flag}\n"
         elif "🔴" in flag: red_flags += f"{flag}\n"
 
+    comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
+    
     return domain, payload, green_flags, red_flags, comments, reviewer, es_voto_ok
 
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
@@ -184,7 +207,9 @@ async def upload_attio_entry(entry_id, payload, green, red, comments, status, qu
 async def handle_signals(request: Request):
     try:
         form_data = await request.json()
-        domain, payload, green_flags, red_flags, new_comment, reviewer, es_voto_ok = generar_payload(form_data)
+
+        questions = form_data.get("submission", {}).get("questions", [])
+        domain = questions[DOMAIN_INDEX].get("value", "")
         
         company_id = await find_company_id_from_domain(domain)
         deal_id = await find_deal_from_company_id(company_id)
@@ -195,6 +220,8 @@ async def handle_signals(request: Request):
 
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
+
+        _, payload, green_flags, red_flags, new_comment, reviewer,es_voto_ok = generar_payload(form_data, tier_actual)
         
         await upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier_actual)
 
