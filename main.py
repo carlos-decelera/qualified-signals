@@ -121,15 +121,15 @@ def generar_payload(form_data, tier_actual="Tier 1"):
             return "🔥 STRONG YES (Pre-IC)", True
 
         # 2. 🤢 WEAK YES
-        if ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
+        elif ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
             return "🤢 WEAK YES (Deep Dive)", True
 
         # 3. 🤔 WEAK NO
-        if ("🟢" in p1 or "🟡" in p1) and c_rojos == 0 and comp_rojos >= 1:
+        elif ("🟢" in p1 or "🟡" in p1) and c_rojos == 0 and comp_rojos >= 1:
             return "🤔 WEAK NO (Descarte)", False
 
         # 4. 🛑 STRONG NO
-        if "🔴" in p1 or c_rojos >= 1:
+        elif "🔴" in p1 or c_rojos >= 1:
             return "🛑 STRONG NO (Muerte)", False
 
         return "❓ INDEFINIDO", False
