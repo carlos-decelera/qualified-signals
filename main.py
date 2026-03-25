@@ -92,74 +92,68 @@ def generar_payload(form_data, tier_actual="Tier 1"):
     domain = questions[DOMAIN_INDEX].get("value", "")
     comments_raw = questions[COMMENTS_INDEX].get("value", "")
     
-    # 1. Extraemos los valores de las preguntas de flags simples (P1 a P7)
-    # Según tus constantes: FLAGS_START=2, FLAGS_END=9 (toma índices 2,3,4,5,6,7,8)
-    simple_flags = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
+    # Extraemos las 7 preguntas base (P1 a P7)
+    # P1: Thesis | P2-P4: Críticos | P5-P7: Complementarios
+    base_flags = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
     
-    # 2. Extraemos valores de multi-flags (P8, P9...)
+    # Extraemos multi-flags (P8+) para el detalle visual
     multi_flags = []
     for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         val = q.get("value")
-        if isinstance(val, list):
-            multi_flags.extend(val)
-        elif val:
-            multi_flags.append(val)
+        if isinstance(val, list): multi_flags.extend(val)
+        elif val: multi_flags.append(val)
 
-    # --- NUEVA LÓGICA DE CRITERIO ---
-    def check_criteria(p_list, tier):
-        # p_list[0] = P1
-        # p_list[1:4] = P2, P3, P4
-        # p_list[4:7] = P5, P6, P7
-        if len(p_list) < 7: return False
+    def evaluar_veredicto(p_list):
+        if len(p_list) < 7: return "ERROR", False
         
-        p1 = p_list[0]
-        grupo_a = p_list[1:4] # P2, P3, P4
-        grupo_b = p_list[4:7] # P5, P6, P7
+        p1 = p_list[0]          # Thesis
+        criticos = p_list[1:4]  # P2, P3, P4
+        compl = p_list[4:7]     # P5, P6, P7
 
-        if tier == "Tier 1":
-            # P1: Verde
-            cond1 = "🟢" in p1
-            # P2-P4: Mínimo 2 verdes, 0 rojos
-            cond2 = sum(1 for v in grupo_a if "🟢" in v) >= 2 and not any("🔴" in v for v in grupo_a)
-            # P5-P7: Mínimo 1 verde, 0 rojos
-            cond3 = sum(1 for v in grupo_b if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_b)
-            return cond1 and cond2 and cond3
+        # Conteos rápidos
+        c_verdes = sum(1 for v in criticos if "🟢" in v)
+        c_rojos = sum(1 for v in criticos if "🔴" in v)
+        comp_verdes = sum(1 for v in compl if "🟢" in v)
+        comp_rojos = sum(1 for v in compl if "🔴" in v)
 
-        elif tier == "Tier 2":
-            # P1: Verde o Amarillo
-            cond1 = "🟢" in p1 or "🟡" in p1
-            # P2-P4: Mínimo 1 verde, 0 rojos
-            cond2 = sum(1 for v in grupo_a if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_a)
-            # P5-P7: Mínimo 1 verde, 0 rojos
-            cond3 = sum(1 for v in grupo_b if "🟢" in v) >= 1 and not any("🔴" in v for v in grupo_b)
-            return cond1 and cond2 and cond3
-        
-        return False
+        # 1. 🔥 STRONG YES
+        if "🟢" in p1 and c_verdes >= 2 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
+            return "🔥 STRONG YES (Pre-IC)", True
 
-    # Evaluamos solo con las primeras 7 preguntas (las críticas)
-    es_voto_ok = check_criteria(simple_flags, tier_actual)
+        # 2. 🤢 WEAK YES
+        if ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
+            return "🤢 WEAK YES (Deep Dive)", True
 
-    # --- CONSTRUCCIÓN DEL RESUMEN ---
-    # Para el texto del payload usamos TODAS (simples + multi)
-    todas_las_flags = simple_flags + multi_flags
-    voto_status = "✅" if es_voto_ok else "🔴"
-    
+        # 3. 🤔 WEAK NO
+        if ("🟢" in p1 or "🟡" in p1) and c_rojos == 0 and comp_rojos >= 1:
+            return "🤔 WEAK NO (Descarte)", False
+
+        # 4. 🛑 STRONG NO
+        if "🔴" in p1 or c_rojos >= 1:
+            return "🛑 STRONG NO (Muerte)", False
+
+        return "❓ INDEFINIDO", False
+
+    veredicto_nombre, es_voto_ok = evaluar_veredicto(base_flags)
+
+    # --- CONSTRUCCIÓN DEL PAYLOAD ---
+    voto_icon = "✅" if es_voto_ok else "❌"
     payload = f"Reviewer: {reviewer} ({tier_actual})\n"
-    payload += f"Veredicto: {voto_status}\n"
+    payload += f"Veredicto: {voto_icon} {veredicto_nombre}\n"
     payload += "\n-- DETALLE --\n"
 
-    green_flags_txt = f"{reviewer}:\n"
-    red_flags_txt = f"{reviewer}:\n"
+    all_flags = base_flags + multi_flags
+    green_txt, red_txt = f"{reviewer}:\n", f"{reviewer}:\n"
     
-    for flag in todas_las_flags:
+    for flag in all_flags:
         if not flag: continue
         payload += f"{flag}\n"
-        if "🟢" in flag: green_flags_txt += f"{flag}\n"
-        elif "🔴" in flag: red_flags_txt += f"{flag}\n"
+        if "🟢" in flag: green_txt += f"{flag}\n"
+        elif "🔴" in flag: red_txt += f"{flag}\n"
 
     comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
     
-    return domain, payload, green_flags_txt, red_flags_txt, comments, reviewer, es_voto_ok
+    return domain, payload, green_txt, red_txt, comments, reviewer, es_voto_ok
 
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
