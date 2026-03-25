@@ -104,35 +104,42 @@ def generar_payload(form_data, tier_actual="Tier 1"):
         elif val: multi_flags.append(val)
 
     def evaluar_veredicto(p_list):
-        if len(p_list) < 7: return "ERROR", False
+        if len(p_list) < 7: 
+            logger.warning(f"Lista de preguntas corta: {len(p_list)}")
+            return "⚠️ ERROR: Faltan preguntas", False
         
         p1 = p_list[0]          # Thesis
         criticos = p_list[1:4]  # P2, P3, P4
         compl = p_list[4:7]     # P5, P6, P7
 
-        # Conteos rápidos
+        # Conteos precisos
         c_verdes = sum(1 for v in criticos if "🟢" in v)
         c_rojos = sum(1 for v in criticos if "🔴" in v)
         comp_verdes = sum(1 for v in compl if "🟢" in v)
         comp_rojos = sum(1 for v in compl if "🔴" in v)
+        
+        # Log para debug (ver esto en la consola)
+        logger.info(f"DEBUG EVAL: P1:{p1} | Crit_V:{c_verdes} Crit_R:{c_rojos} | Comp_V:{comp_verdes} Comp_R:{comp_rojos}")
 
         # 1. 🔥 STRONG YES
         if "🟢" in p1 and c_verdes >= 2 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
             return "🔥 STRONG YES (Pre-IC)", True
 
-        # 2. 🤢 WEAK YES
-        elif ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
+        # 2. 🤢 WEAK YES (Tu caso: P1 Amarillo + 1 Verde Crit + 1 Verde Compl + 0 Rojas)
+        # Ajustado: Ahora solo pide c_verdes >= 1 y comp_verdes >= 1
+        if ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
             return "🤢 WEAK YES (Deep Dive)", True
 
         # 3. 🤔 WEAK NO
-        elif ("🟢" in p1 or "🟡" in p1) and c_rojos == 0 and comp_rojos >= 1:
+        # Si hay CUALQUIER rojo en complementarios, o si no llegamos al mínimo de verdes
+        if ("🟢" in p1 or "🟡" in p1) and (comp_rojos >= 1 or (c_verdes == 0 and comp_verdes == 0)):
             return "🤔 WEAK NO (Descarte)", False
 
         # 4. 🛑 STRONG NO
-        elif "🔴" in p1 or c_rojos >= 1:
+        if "🔴" in p1 or c_rojos >= 1:
             return "🛑 STRONG NO (Muerte)", False
 
-        return "❓ INDEFINIDO", False
+        return "❓ INDEFINIDO (KO por defecto)", False
 
     veredicto_nombre, es_voto_ok = evaluar_veredicto(base_flags)
 
