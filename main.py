@@ -92,26 +92,29 @@ def generar_payload(form_data, tier_actual="Tier 1"):
     domain = questions[DOMAIN_INDEX].get("value", "")
     comments_raw = questions[COMMENTS_INDEX].get("value", "")
     
-    # --- RECONSTRUCCIÓN DE LISTA DE FLAGS ---
-    all_flags_list = questions[FLAGS_START:FLAGS_END]
+    # 1. Extraemos los valores de las preguntas de flags simples (P1 a P7)
+    # Según tus constantes: FLAGS_START=2, FLAGS_END=9 (toma índices 2,3,4,5,6,7,8)
+    simple_flags = [q.get("value", "") for q in questions[FLAGS_START:FLAGS_END]]
+    
+    # 2. Extraemos valores de multi-flags (P8, P9...)
+    multi_flags = []
     for q in questions[MULTI_FLAGS_START:MULTI_FLAGS_END]:
         val = q.get("value")
         if isinstance(val, list):
-            for item in val: all_flags_list.append({"value": item})
+            multi_flags.extend(val)
+        elif val:
+            multi_flags.append(val)
 
-    # Extraemos solo el texto de los valores (ej: "🟢 OK")
-    s_vals = [f.get("value", "") for f in all_flags_list]
-    
     # --- NUEVA LÓGICA DE CRITERIO ---
-    def check_criteria(vals, tier):
-        if len(vals) < 7: return False
+    def check_criteria(p_list, tier):
+        # p_list[0] = P1
+        # p_list[1:4] = P2, P3, P4
+        # p_list[4:7] = P5, P6, P7
+        if len(p_list) < 7: return False
         
-        # P1 (Índice 0)
-        p1 = vals[0]
-        # P2, P3, P4 (Índices 1, 2, 3)
-        grupo_a = vals[1:4]
-        # P5, P6, P7 (Índices 4, 7) - asumiendo que el orden sigue hasta el 7
-        grupo_b = vals[4:7]
+        p1 = p_list[0]
+        grupo_a = p_list[1:4] # P2, P3, P4
+        grupo_b = p_list[4:7] # P5, P6, P7
 
         if tier == "Tier 1":
             # P1: Verde
@@ -133,24 +136,30 @@ def generar_payload(form_data, tier_actual="Tier 1"):
         
         return False
 
-    es_voto_ok = check_criteria(s_vals, tier_actual)
+    # Evaluamos solo con las primeras 7 preguntas (las críticas)
+    es_voto_ok = check_criteria(simple_flags, tier_actual)
 
-    # --- CONSTRUCCIÓN DEL RESUMEN (PAYLOAD) ---
+    # --- CONSTRUCCIÓN DEL RESUMEN ---
+    # Para el texto del payload usamos TODAS (simples + multi)
+    todas_las_flags = simple_flags + multi_flags
     voto_status = "✅" if es_voto_ok else "🔴"
+    
     payload = f"Reviewer: {reviewer} ({tier_actual})\n"
     payload += f"Veredicto: {voto_status}\n"
     payload += "\n-- DETALLE --\n"
 
-    green_flags, red_flags = f"{reviewer}:\n", f"{reviewer}:\n"
-    for flag in s_vals:
+    green_flags_txt = f"{reviewer}:\n"
+    red_flags_txt = f"{reviewer}:\n"
+    
+    for flag in todas_las_flags:
         if not flag: continue
         payload += f"{flag}\n"
-        if "🟢" in flag: green_flags += f"{flag}\n"
-        elif "🔴" in flag: red_flags += f"{flag}\n"
+        if "🟢" in flag: green_flags_txt += f"{flag}\n"
+        elif "🔴" in flag: red_flags_txt += f"{flag}\n"
 
     comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
     
-    return domain, payload, green_flags, red_flags, comments, reviewer, es_voto_ok
+    return domain, payload, green_flags_txt, red_flags_txt, comments, reviewer, es_voto_ok
 
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
