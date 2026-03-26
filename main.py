@@ -162,13 +162,13 @@ def generar_payload(form_data, tier_actual="Tier 1"):
     
     return domain, payload, green_txt, red_txt, comments, reviewer, veredicto_nombre, es_voto_ok
 
-def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
+def calculate_funnel_status(tier_actual, status_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
-        if t2_ok >= 1: return "First interaction", True
+        if t2_ok >= 1: return "First interaction" if status_actual == "Initial screening" else "Deep dive", True
         if t2_ko >= 1: return "Killed", False
         return default_status, True
 
-    if t1_ok >= 1: return "First interaction", True
+    if t1_ok >= 1: return "First interaction" if status_actual == "Initial screening" else "Deep dive", True
     if t1_ko >= 1: return "Killed", False
 
     return default_status if default_status else "Initial screening", True
@@ -231,6 +231,8 @@ async def handle_signals(request: Request):
 
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
+        status_list = entry_values.get("status", [])
+        status_actual = status_list[0].get("status", {}).get("title") if status_list else "" 
 
         _, payload, green_flags, red_flags, new_comment, reviewer, veredicto_nombre, es_voto_ok = generar_payload(form_data, tier_actual)
         
