@@ -160,7 +160,7 @@ def generar_payload(form_data, tier_actual="Tier 1"):
 
     comments = f"{reviewer}: {comments_raw}" if comments_raw else ""
     
-    return domain, payload, green_txt, red_txt, comments, reviewer, es_voto_ok
+    return domain, payload, green_txt, red_txt, comments, reviewer, veredicto_nombre, es_voto_ok
 
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
@@ -192,13 +192,14 @@ async def upload_senior_needed(entry_id):
     async with httpx.AsyncClient(timeout=30.0) as client:
         await client.patch(url, headers=HEADERS, json=data)
 
-async def upload_attio_entry(entry_id, payload, green, red, comments, status, qualified=True):
+async def upload_attio_entry(entry_id, payload, green, red, comments, status, veredicto_nombre, qualified=True):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     entry_values = {
         "signals_qualified": [{"value": payload}],
         "green_flags_qualified": [{"value": green}],
         "red_flags_qualified": [{"value": red}],
-        "status": [{"status": status}]
+        "status": [{"status": status}],
+        "screening_conviction": [{"value": veredicto_nombre}]
     }
     if comments and comments.strip():
         entry_values["signals_comments_qualified"] = [{"value": comments}]
@@ -231,7 +232,7 @@ async def handle_signals(request: Request):
         tier_list = entry_values.get("tier_5", [])
         tier_actual = tier_list[0].get("status", {}).get("title", "Tier 1") if tier_list else "Tier 1"
 
-        _, payload, green_flags, red_flags, new_comment, reviewer,es_voto_ok = generar_payload(form_data, tier_actual)
+        _, payload, green_flags, red_flags, new_comment, reviewer, veredicto_nombre, es_voto_ok = generar_payload(form_data, tier_actual)
         
         await upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier_actual)
 
@@ -271,7 +272,7 @@ async def handle_signals(request: Request):
         if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
             await upload_senior_needed(entry_id)
 
-        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, qualified)
+        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, veredicto_nombre, qualified)
         
         return {"status": "success", "veredicto": "OK" if es_voto_ok else "KO"}
 
