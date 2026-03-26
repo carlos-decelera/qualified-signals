@@ -164,12 +164,12 @@ def generar_payload(form_data, tier_actual="Tier 1"):
 
 def calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
-        if t2_ok >= 2: return "First interaction", True
-        if t2_ko >= 2: return "Killed", False
+        if t2_ok >= 1: return "First interaction", True
+        if t2_ko >= 1: return "Killed", False
         return default_status, True
 
-    if t1_ok >= 2: return "First interaction", True
-    if t1_ko >= 2: return "Killed", False
+    if t1_ok >= 1: return "First interaction", True
+    if t1_ko >= 1: return "Killed", False
 
     return default_status if default_status else "Initial screening", True
 
