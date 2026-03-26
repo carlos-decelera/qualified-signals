@@ -269,7 +269,7 @@ async def handle_signals(request: Request):
 
         current_st_list = entry_values.get("status", [])
         default_status = current_st_list[0].get("status", {}).get("title", "") if current_st_list else ""
-        status, qualified = calculate_funnel_status(tier_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status)
+        status, qualified = calculate_funnel_status(tier_actual, status_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status)
 
         if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
             await upload_senior_needed(entry_id)
