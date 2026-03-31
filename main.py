@@ -274,7 +274,13 @@ async def handle_signals(request: Request):
         if tier_actual == "Tier 1" and t1_ok == 1 and t1_ko == 1:
             await upload_senior_needed(entry_id)
 
-        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, veredicto_nombre, qualified)
+        new_conviction_line = f"{reviewer}: {veredicto_nombre}"
+        ex_conviction_list = entry_values.get("screening_conviction", [])
+        ex_conviction = ex_conviction_list[0].get("value", "") if ex_conviction_list else ""
+
+        final_conviction = f"{new_conviction_line}\n---\n{ex_conviction}" if ex_conviction else new_conviction_line
+
+        await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, final_conviction, qualified)
         
         return {"status": "success", "veredicto": "OK" if es_voto_ok else "KO"}
 
