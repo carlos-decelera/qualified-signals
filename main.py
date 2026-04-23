@@ -139,12 +139,17 @@ def generar_payload(form_data, tier_actual="Tier 1"):
         if "🔴" in p1 or c_rojos >= 1:
             return "🛑 STRONG NO (Muerte)", False
 
-        return "❓ INDEFINIDO (KO por defecto)", False
+        return "❓ INDEFINIDO (sin cambio de status)", None
 
     veredicto_nombre, es_voto_ok = evaluar_veredicto(base_flags)
 
     # --- CONSTRUCCIÓN DEL PAYLOAD ---
-    voto_icon = "✅" if es_voto_ok else "❌"
+    if es_voto_ok is True:
+        voto_icon = "✅"
+    elif es_voto_ok is False:
+        voto_icon = "❌"
+    else:
+        voto_icon = "➖"
     payload = f"Reviewer: {reviewer} ({tier_actual})\n"
     payload += f"Veredicto: {voto_icon} {veredicto_nombre}\n"
     payload += "\n-- DETALLE --\n"
@@ -176,6 +181,8 @@ def calculate_funnel_status(tier_actual, status_actual, t1_ok, t1_ko, t2_ok, t2_
 async def upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
     field = ""
+    if es_voto_ok is None:
+        return
     if tier == "Tier 1":
         field = "tier_1_ok" if es_voto_ok else "tier_1_ko"
     elif tier == "Tier 2":
@@ -244,11 +251,15 @@ async def handle_signals(request: Request):
         t2_ko = len(entry_values.get("tier_2_ko", []))
 
         if tier_actual == "Tier 1":
-            if es_voto_ok: t1_ok += 1
-            else: t1_ko += 1
+            if es_voto_ok is True:
+                t1_ok += 1
+            elif es_voto_ok is False:
+                t1_ko += 1
         else:
-            if es_voto_ok: t2_ok += 1
-            else: t2_ko += 1
+            if es_voto_ok is True:
+                t2_ok += 1
+            elif es_voto_ok is False:
+                t2_ko += 1
 
         ex_payload_list = entry_values.get("signals_qualified", [])
         if ex_payload_list:
@@ -282,7 +293,13 @@ async def handle_signals(request: Request):
 
         await upload_attio_entry(entry_id, payload, green_flags, red_flags, final_comments, status, final_conviction, qualified)
         
-        return {"status": "success", "veredicto": "OK" if es_voto_ok else "KO"}
+        if es_voto_ok is True:
+            veredicto_webhook = "OK"
+        elif es_voto_ok is False:
+            veredicto_webhook = "KO"
+        else:
+            veredicto_webhook = "INDEFINIDO"
+        return {"status": "success", "veredicto": veredicto_webhook}
 
     except Exception as e:
         logger.error(f"Error: {e}")
