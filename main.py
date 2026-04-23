@@ -128,7 +128,7 @@ def generar_payload(form_data, tier_actual="Tier 1"):
         # 2. 🤢 WEAK YES (Tu caso: P1 Amarillo + 1 Verde Crit + 1 Verde Compl + 0 Rojas)
         # Ajustado: Ahora solo pide c_verdes >= 1 y comp_verdes >= 1
         if ("🟢" in p1 or "🟡" in p1) and c_verdes >= 1 and comp_verdes >= 1 and c_rojos == 0 and comp_rojos == 0:
-            return "🤢 WEAK YES (Deep Dive)", True
+            return "🤢 WEAK YES (In play)", True
 
         # 3. 🤔 WEAK NO
         # Si hay CUALQUIER rojo en complementarios, o si no llegamos al mínimo de verdes
@@ -164,14 +164,14 @@ def generar_payload(form_data, tier_actual="Tier 1"):
 
 def calculate_funnel_status(tier_actual, status_actual, t1_ok, t1_ko, t2_ok, t2_ko, default_status=None):
     if tier_actual == "Tier 2" or (t1_ok >= 1 and t1_ko >= 1):
-        if t2_ok >= 1: return "Deep dive", True
+        if t2_ok >= 1: return "In play", True
         if t2_ko >= 1: return "Killed", False
         return default_status, True
 
-    if t1_ok >= 1: return "Deep dive", True
+    if t1_ok >= 1: return "In play", True
     if t1_ko >= 1: return "Killed", False
 
-    return default_status if default_status else "Initial screening", True
+    return default_status if default_status else "Qualified", True
 
 async def upload_reviewer_ko_ok(entry_id, es_voto_ok, reviewer, tier):
     url = f"{BASE_URL}/lists/{LIST_SLUG}/entries/{entry_id}"
@@ -205,7 +205,7 @@ async def upload_attio_entry(entry_id, payload, green, red, comments, status, ve
         entry_values["signals_comments_qualified"] = [{"value": comments}]
         
     if not qualified:
-        entry_values["reason"] = [{"status": "Signals (Qualified)"}]
+        entry_values["reason"] = [{"status": "Screening conviction"}]
 
     data = {"data": {"entry_values": entry_values}}
     async with httpx.AsyncClient(timeout=30.0) as client:
