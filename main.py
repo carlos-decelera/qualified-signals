@@ -227,6 +227,8 @@ async def handle_signals(request: Request):
         form_data = await request.json()
 
         questions = form_data.get("submission", {}).get("questions", [])
+        if len(questions) <= DOMAIN_INDEX:
+            raise HTTPException(status_code=400, detail="Form data incompleto: falta domain")
         domain = questions[DOMAIN_INDEX].get("value", "")
         
         company_id = await find_company_id_from_domain(domain)
@@ -264,8 +266,10 @@ async def handle_signals(request: Request):
         ex_payload_list = entry_values.get("signals_qualified", [])
         if ex_payload_list:
             ex_p = ex_payload_list[0].get("value", "")
-            ex_g = entry_values.get("green_flags_qualified", [{}])[0].get("value", "")
-            ex_r = entry_values.get("red_flags_qualified", [{}])[0].get("value", "")
+            ex_green_list = entry_values.get("green_flags_qualified", [])
+            ex_red_list = entry_values.get("red_flags_qualified", [])
+            ex_g = ex_green_list[0].get("value", "") if ex_green_list else ""
+            ex_r = ex_red_list[0].get("value", "") if ex_red_list else ""
             payload = f"{payload}\n---\n{ex_p}"
             green_flags = f"{green_flags}\n---\n{ex_g}"
             red_flags = f"{red_flags}\n---\n{ex_r}"
@@ -301,6 +305,8 @@ async def handle_signals(request: Request):
             veredicto_webhook = "INDEFINIDO"
         return {"status": "success", "veredicto": veredicto_webhook}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
